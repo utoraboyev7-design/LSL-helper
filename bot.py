@@ -6,7 +6,9 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+                           InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+                           ChatMemberUpdated)
 
 from languages.ru.texts import TEXTS as RU_TEXTS
 from languages.ru.subjects import SUBJECTS as RU_SUBJECTS
@@ -28,6 +30,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DEVELOPER_PIN = os.getenv("DEVELOPER_PIN")
 
 DATA_FILE = "users.json"
+GROUPS_FILE = "groups.json"
 
 dp = Dispatcher()
 
@@ -350,6 +353,8 @@ def create_user(user_id, tg_user=None):
     user.setdefault("username", None)
     user.setdefault("first_name", None)
     user.setdefault("last_name", None)
+    user.setdefault("role", "student")
+    user.setdefault("banned", False)
 
     if tg_user is not None:
         user["username"] = tg_user.username
@@ -466,16 +471,74 @@ def main_menu(user_id):
 class DeveloperLogin(StatesGroup):
     waiting_for_pin = State()
 
+class DeveloperAction(StatesGroup):
+    waiting_for_user = State()
+
+ROLE_LABELS = {
+    "student": "Пользователь",
+    "junior_moder": "Мл. модер",
+    "moder": "Модер",
+    "junior_admin": "Мл. админ",
+    "admin": "Админ",
+    "zga": "ЗГА",
+    "ga": "ГА",
+    "creator": "Создатель",
+    "teacher": "Учитель",
+    "developer": "Разработчик",
+}
+
+ROLE_LEVELS = {
+    "student": 0,
+    "teacher": 10,
+    "junior_moder": 20,
+    "moder": 30,
+    "junior_admin": 40,
+    "admin": 50,
+    "zga": 60,
+    "ga": 70,
+    "creator": 100,
+    "developer": 110,
+}
+
+def role_label(role):
+    return ROLE_LABELS.get(role, role)
+
+def load_groups():
+    if not os.path.exists(GROUPS_FILE):
+        return {}
+    try:
+        with open(GROUPS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+groups = load_groups()
+
+def save_groups():
+    with open(GROUPS_FILE, "w", encoding="utf-8") as f:
+        json.dump(groups, f, ensure_ascii=False, indent=4)
+
+def remember_group(chat):
+    if chat.type not in {"group", "supergroup"}:
+        return
+    groups[str(chat.id)] = {
+        "title": chat.title or "Без названия",
+        "username": chat.username,
+        "type": chat.type,
+        "active": True,
+    }
+    save_groups()
 
 developer_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="🏫 Группы"), KeyboardButton(text="🛡 Персонал")],
         [KeyboardButton(text="🔎 Найти пользователя")],
         [KeyboardButton(text="🚪 Выйти из панели")]
     ],
     resize_keyboard=True
 )
-
 
 def developer_user_card(user_id, user):
     username = f"@{user.get('username')}" if user.get("username") else "—"
@@ -488,10 +551,65 @@ def developer_user_card(user_id, user):
         f"🔗 {username}\n"
         f"🎓 Класс: {user.get('class') or '—'}\n"
         f"🌐 Язык: {user.get('language') or '—'}\n"
-        f"🔑 Роль: {user.get('role', 'student')}\n"
+        f"🛡 Должность: {role_label(user.get('role', 'student'))}\n"
         f"🚫 Бан: {'да' if user.get('banned', False) else 'нет'}"
     )
 
+def user_manage_keyboard(user_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎖 Изменить должность", callback_data=f"roles:{user_id}")],
+        [InlineKeyboardButton(
+            text="✅ Разбанить" if users.get(str(user_id), {}).get("banned") else "🚫 Заблокировать",
+            callback_data=f"ban:{user_id}"
+        )]
+    ])
+
+def role_keyboard(user_id):
+    rows = []
+    role_ids = ["student", "junior_moder", "moder", "junior_admin", "admin", "zga", "ga", "teacher"]
+    for i in range(0, len(role_ids), 2):
+        row = [
+            InlineKeyboardButton(
+                text=ROLE_LABELS[r],
+                callback_data=f"setrole:{user_id}:{r}"
+            )
+            for r in role_ids[i:i+2]
+        ]
+        rows.append(row)
+    # Creator is intentionally separate/protected.
+    rows.append([InlineKeyboardButton(text="👑 Создатель", callback_data=f"setrole:{user_id}:creator")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user:{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def can_manage(actor_id, target_id, new_role=None):
+    actor = users.get(str(actor_id), {})
+    target = users.get(str(target_id), {})
+    actor_role = actor.get("role", "student")
+    target_role = target.get("role", "student")
+
+    if actor_role == "developer":
+        return True
+    if actor_role != "creator":
+        return False
+    if target_role == "developer":
+        return False
+    if new_role == "developer":
+        return False
+    return True
+
+@dp.my_chat_member()
+async def bot_membership_changed(event: ChatMemberUpdated):
+    chat = event.chat
+    if chat.type not in {"group", "supergroup"}:
+        return
+    new_status = event.new_chat_member.status
+    groups[str(chat.id)] = {
+        "title": chat.title or "Без названия",
+        "username": chat.username,
+        "type": chat.type,
+        "active": new_status not in {"left", "kicked"},
+    }
+    save_groups()
 
 @dp.message(Command("panel"))
 async def open_panel(message: Message, state: FSMContext):
@@ -502,8 +620,8 @@ async def open_panel(message: Message, state: FSMContext):
         await message.answer("🚫 Доступ к боту для вашего аккаунта заблокирован.")
         return
 
-    if is_developer(user_id):
-        await message.answer("👑 Режим разработчика", reply_markup=developer_menu)
+    if is_developer(user_id) or get_role(user_id) == "creator":
+        await message.answer("👑 Панель управления", reply_markup=developer_menu)
         return
 
     if not DEVELOPER_PIN:
@@ -511,11 +629,7 @@ async def open_panel(message: Message, state: FSMContext):
         return
 
     await state.set_state(DeveloperLogin.waiting_for_pin)
-    await message.answer(
-        "🔐 Введите PIN разработчика:",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
+    await message.answer("🔐 Введите PIN разработчика:", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(DeveloperLogin.waiting_for_pin)
 async def developer_pin_login(message: Message, state: FSMContext):
@@ -525,69 +639,167 @@ async def developer_pin_login(message: Message, state: FSMContext):
         users[user_id]["role"] = "developer"
         save_users()
         await state.clear()
-        await message.answer(
-            "✅ Доступ подтверждён.\n\n👑 Режим разработчика",
-            reply_markup=developer_menu
-        )
+        await message.answer("✅ Доступ подтверждён.\n\n👑 Режим разработчика", reply_markup=developer_menu)
         return
-
     await message.answer("❌ Неверный PIN. Попробуйте ещё раз или отправьте /start для выхода.")
-
 
 @dp.message(F.text == "📊 Статистика")
 async def developer_stats(message: Message):
-    if not is_developer(message.from_user.id):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
-
     total = len(users)
-    banned = sum(1 for user in users.values() if user.get("banned", False))
-    teachers = sum(1 for user in users.values() if user.get("role") == "teacher")
-    admins = sum(1 for user in users.values() if user.get("role") == "admin")
-
+    banned = sum(1 for u in users.values() if u.get("banned", False))
+    staff = sum(1 for u in users.values() if u.get("role", "student") != "student")
+    active_groups = sum(1 for g in groups.values() if g.get("active", True))
     await message.answer(
         "📊 Статистика бота\n\n"
         f"👥 Пользователей: {total}\n"
-        f"👨‍🏫 Учителей: {teachers}\n"
-        f"🛡 Администраторов: {admins}\n"
+        f"🛡 Персонала: {staff}\n"
+        f"🏫 Групп: {active_groups}\n"
         f"🚫 Заблокировано: {banned}"
     )
 
-
 @dp.message(F.text == "👥 Пользователи")
 async def developer_users(message: Message):
-    if not is_developer(message.from_user.id):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
-
     if not users:
         await message.answer("Пользователей пока нет.")
         return
+    await message.answer(f"👥 Всего пользователей: {len(users)}")
+    for user_id, user in list(users.items())[:20]:
+        await message.answer(developer_user_card(user_id, user), reply_markup=user_manage_keyboard(user_id))
+    if len(users) > 20:
+        await message.answer("ℹ️ Пока показаны первые 20 пользователей.")
 
-    items = list(users.items())
-    await message.answer(f"👥 Всего пользователей: {len(items)}")
+@dp.message(F.text == "🔎 Найти пользователя")
+async def find_user_start(message: Message, state: FSMContext):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
+        return
+    await state.set_state(DeveloperAction.waiting_for_user)
+    await message.answer("🔎 Отправь Telegram ID или @username пользователя:", reply_markup=ReplyKeyboardRemove())
 
-    # Первая версия: показываем до 20 пользователей за один запрос.
-    for user_id, user in items[:20]:
-        await message.answer(developer_user_card(user_id, user))
+@dp.message(DeveloperAction.waiting_for_user)
+async def find_user_finish(message: Message, state: FSMContext):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
+        await state.clear()
+        return
+    query = (message.text or "").strip()
+    found_id = None
+    if query.isdigit() and query in users:
+        found_id = query
+    else:
+        username = query.lstrip("@").lower()
+        for uid, u in users.items():
+            if (u.get("username") or "").lower() == username:
+                found_id = uid
+                break
+    await state.clear()
+    if not found_id:
+        await message.answer("❌ Пользователь не найден.", reply_markup=developer_menu)
+        return
+    await message.answer(
+        developer_user_card(found_id, users[found_id]),
+        reply_markup=user_manage_keyboard(found_id)
+    )
+    await message.answer("👑 Панель управления", reply_markup=developer_menu)
 
-    if len(items) > 20:
+@dp.message(F.text == "🏫 Группы")
+async def developer_groups(message: Message):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
+        return
+    active = [(gid, g) for gid, g in groups.items() if g.get("active", True)]
+    if not active:
         await message.answer(
-            "ℹ️ Показаны первые 20. Позже добавим страницы и кнопки управления."
+            "🏫 Пока групп нет в базе.\n\n"
+            "Добавь бота в группу (или пере-добавь его), и Telegram пришлёт событие — группа появится здесь."
         )
+        return
+    text = [f"🏫 Группы бота: {len(active)}\n"]
+    for gid, g in active[:30]:
+        uname = f"@{g['username']}" if g.get("username") else "без username"
+        text.append(f"• {g.get('title', 'Без названия')}\n  🆔 {gid} | {uname}")
+    await message.answer("\n".join(text))
 
+@dp.message(F.text == "🛡 Персонал")
+async def developer_staff(message: Message):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
+        return
+    staff = [(uid, u) for uid, u in users.items() if u.get("role", "student") != "student"]
+    if not staff:
+        await message.answer("🛡 Назначенного персонала пока нет.")
+        return
+    await message.answer(f"🛡 Персонал: {len(staff)}")
+    for uid, u in staff[:30]:
+        await message.answer(developer_user_card(uid, u), reply_markup=user_manage_keyboard(uid))
+
+@dp.callback_query(F.data.startswith("user:"))
+async def callback_user(callback: CallbackQuery):
+    uid = callback.data.split(":", 1)[1]
+    if get_role(callback.from_user.id) not in {"developer", "creator"}:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if uid not in users:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    await callback.message.edit_text(developer_user_card(uid, users[uid]), reply_markup=user_manage_keyboard(uid))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("roles:"))
+async def callback_roles(callback: CallbackQuery):
+    uid = callback.data.split(":", 1)[1]
+    if not can_manage(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await callback.message.edit_reply_markup(reply_markup=role_keyboard(uid))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("setrole:"))
+async def callback_set_role(callback: CallbackQuery):
+    _, uid, new_role = callback.data.split(":", 2)
+    if uid not in users or new_role not in ROLE_LABELS:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+    if not can_manage(callback.from_user.id, uid, new_role):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    # Developer cannot be assigned through buttons.
+    if new_role == "developer":
+        await callback.answer("Роль разработчика назначается только через PIN.", show_alert=True)
+        return
+    users[uid]["role"] = new_role
+    save_users()
+    await callback.message.edit_text(developer_user_card(uid, users[uid]), reply_markup=user_manage_keyboard(uid))
+    await callback.answer(f"Назначено: {role_label(new_role)}")
+
+@dp.callback_query(F.data.startswith("ban:"))
+async def callback_ban(callback: CallbackQuery):
+    uid = callback.data.split(":", 1)[1]
+    if uid not in users:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    if not can_manage(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    if str(callback.from_user.id) == uid:
+        await callback.answer("Нельзя заблокировать самого себя", show_alert=True)
+        return
+    if users[uid].get("role") == "developer":
+        await callback.answer("Разработчика блокировать нельзя", show_alert=True)
+        return
+    users[uid]["banned"] = not users[uid].get("banned", False)
+    save_users()
+    await callback.message.edit_text(developer_user_card(uid, users[uid]), reply_markup=user_manage_keyboard(uid))
+    await callback.answer("Статус блокировки изменён")
 
 @dp.message(F.text == "🚪 Выйти из панели")
 async def developer_logout(message: Message):
-    if not is_developer(message.from_user.id):
+    if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
-
     language = get_language(message.from_user.id)
     class_name = get_class(message.from_user.id)
-
     if language and class_name:
-        await message.answer(
-            "🚪 Панель закрыта.",
-            reply_markup=main_menu(message.from_user.id)
-        )
+        await message.answer("🚪 Панель закрыта.", reply_markup=main_menu(message.from_user.id))
     elif language:
         await message.answer("🚪 Панель закрыта.", reply_markup=class_menu)
     else:
