@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LSL Control</title>
+<script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+<style>
+:root{font-family:Inter,system-ui,sans-serif}*{box-sizing:border-box}
+body{margin:0;background:var(--tg-theme-bg-color,#101820);color:var(--tg-theme-text-color,#fff)}
+header{padding:18px 16px 10px;position:sticky;top:0;background:var(--tg-theme-bg-color,#101820);z-index:2}
+h1{margin:0;font-size:22px}.sub{opacity:.65;font-size:13px;margin-top:4px}
+nav{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;padding:10px 12px}
+button,.card,input,textarea,select{border:0;border-radius:14px}
+button{padding:11px 8px;background:var(--tg-theme-button-color,#2aabee);color:var(--tg-theme-button-text-color,#fff);font-weight:700}
+main{padding:4px 12px 30px}.card{background:var(--tg-theme-secondary-bg-color,#18232e);padding:14px;margin:10px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{font-size:25px;font-weight:800}
+textarea,input,select{width:100%;padding:12px;margin:7px 0;background:var(--tg-theme-bg-color,#101820);color:inherit;border:1px solid #ffffff20}
+textarea{min-height:130px;resize:vertical}.hidden{display:none}.user{padding:10px 0;border-bottom:1px solid #ffffff16}
+small{opacity:.65}.ok{color:#4bd37b}.err{color:#ff6b6b}
+</style></head>
+<body>
+<header><h1>LSL Control</h1><div class="sub" id="who">Проверяю доступ…</div></header>
+<nav>
+<button onclick="show('home')">Главная</button><button onclick="show('news')">Новости</button>
+<button onclick="show('hw')">ДЗ</button><button onclick="show('users')">Люди</button>
+</nav>
+<main>
+<section id="home"><div class="grid">
+<div class="card"><small>Пользователи</small><div class="stat" id="uc">—</div></div>
+<div class="card"><small>Группы</small><div class="stat" id="gc">—</div></div>
+</div><div class="card"><b>Группы бота</b><div id="groups"></div></div></section>
+<section id="news" class="hidden"><div class="card"><b>📰 Быстрая смена новости</b><textarea id="newsText"></textarea><button onclick="saveNews()">Сохранить</button><div id="newsStatus"></div></div></section>
+<section id="hw" class="hidden"><div class="card"><b>📚 Домашнее задание</b><input id="className" placeholder="Класс, например 7А"><textarea id="hwText" placeholder="Домашнее задание"></textarea><button onclick="saveHw()">Сохранить ДЗ</button><div id="hwStatus"></div></div></section>
+<section id="users" class="hidden"><div class="card"><b>👥 Пользователи</b><input id="search" placeholder="Имя, @username или ID" oninput="renderUsers()"><div id="userList"></div></div></section>
+</main>
+<script>
+const tg=window.Telegram.WebApp; tg.ready(); tg.expand();
+const headers={'X-Telegram-Init-Data':tg.initData,'Content-Type':'application/json'};
+let allUsers=[],me=null;
+function show(id){document.querySelectorAll('main section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden')}
+async function api(url,opt={}){opt.headers={...headers,...(opt.headers||{})};const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r.json()}
+async function load(){
+ try{
+  me=await api('/api/me'); document.getElementById('who').textContent=me.role_label+' • ID '+me.id;
+  uc.textContent=me.users;gc.textContent=me.groups.length;
+  groups.innerHTML=me.groups.map(g=>`<div class="user">🏫 ${esc(g.title||'Группа')}<br><small>${g.id}</small></div>`).join('')||'<small>Нет групп</small>';
+  newsText.value=me.news||'';
+  allUsers=await api('/api/users');renderUsers();
+ }catch(e){document.getElementById('who').innerHTML='<span class="err">Нет доступа или приложение открыто не через Telegram</span>'}
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function renderUsers(){let q=(search.value||'').toLowerCase();userList.innerHTML=allUsers.filter(u=>(u.name+' '+(u.username||'')+' '+u.id).toLowerCase().includes(q)).slice(0,100).map(u=>`<div class="user"><b>${esc(u.name)}</b> ${u.username?'@'+esc(u.username):''}<br><small>${u.id} • ${esc(u.class||'без класса')} • ${esc(u.role_label)}</small></div>`).join('')}
+async function saveNews(){try{await api('/api/news',{method:'POST',body:JSON.stringify({text:newsText.value})});newsStatus.innerHTML='<span class="ok">✓ Сохранено</span>'}catch(e){newsStatus.innerHTML='<span class="err">Ошибка/нет прав</span>'}}
+async function saveHw(){try{await api('/api/homework',{method:'POST',body:JSON.stringify({class_name:className.value,text:hwText.value})});hwStatus.innerHTML='<span class="ok">✓ Сохранено</span>'}catch(e){hwStatus.innerHTML='<span class="err">Ошибка</span>'}}
+load();
+</script></body></html>

@@ -1,13 +1,19 @@
 import asyncio
 import json
 import os
+import hashlib
+import hmac
+import time
+from urllib.parse import parse_qsl
+from pathlib import Path
+from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
-                           InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+                           InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, WebAppInfo,
                            ChatMemberUpdated, ChatPermissions)
 
 from languages.ru.texts import TEXTS as RU_TEXTS
@@ -353,6 +359,7 @@ def create_user(user_id, tg_user=None):
     user.setdefault("username", None)
     user.setdefault("first_name", None)
     user.setdefault("last_name", None)
+    user.setdefault("warnings", {})
     user.setdefault("role", "student")
     user.setdefault("banned", False)
 
@@ -655,6 +662,148 @@ def parse_mute_minutes(text):
         return max(1, min(minutes, 10080))  # максимум 7 дней
     except ValueError:
         return None
+
+
+def _target_from_reply(message: Message):
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        return None
+    return message.reply_to_message.from_user
+
+def _group_staff_allowed(actor_id, target_id):
+    return can_group_moderate(actor_id, target_id)
+
+@dp.message(Command("warn"))
+async def group_warn(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    remember_group(message.chat)
+    create_user(message.from_user.id, message.from_user)
+    target = _target_from_reply(message)
+    if not target:
+        if get_role(message.from_user.id) in GROUP_MOD_ROLES:
+            await message.reply("⚠️ Ответь /warn на сообщение пользователя.")
+        return
+    create_user(target.id, target)
+    if not _group_staff_allowed(message.from_user.id, target.id):
+        await message.reply("⛔ Недостаточно прав.")
+        return
+    gid = str(message.chat.id)
+    warnings = users[str(target.id)].setdefault("warnings", {})
+    warnings[gid] = int(warnings.get(gid, 0)) + 1
+    save_users()
+    reason = (message.text or "").partition(" ")[2].strip() or "Причина не указана"
+    await message.reply(
+        f"⚠️ Варн: {target.full_name}\n"
+        f"📌 Причина: {reason}\n"
+        f"🔢 Варнов: {warnings[gid]}/3"
+    )
+    if warnings[gid] >= 3:
+        try:
+            await message.bot.ban_chat_member(message.chat.id, target.id)
+            warnings[gid] = 0
+            save_users()
+            await message.reply("⛔ 3/3 варнов — пользователь забанен в этой группе.")
+        except Exception:
+            await message.reply("❌ 3/3 варнов, но бан не прошёл. Проверь право бота блокировать участников.")
+
+@dp.message(Command("warns"))
+async def group_warns(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    create_user(message.from_user.id, message.from_user)
+    if get_role(message.from_user.id) not in GROUP_MOD_ROLES:
+        return
+    target = _target_from_reply(message)
+    if not target:
+        await message.reply("⚠️ Ответь /warns на сообщение пользователя.")
+        return
+    create_user(target.id, target)
+    count = users[str(target.id)].setdefault("warnings", {}).get(str(message.chat.id), 0)
+    await message.reply(f"⚠️ {target.full_name}: {count}/3 варнов.")
+
+@dp.message(Command("clearwarns"))
+async def group_clearwarns(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    create_user(message.from_user.id, message.from_user)
+    target = _target_from_reply(message)
+    if not target:
+        if get_role(message.from_user.id) in GROUP_MOD_ROLES:
+            await message.reply("⚠️ Ответь /clearwarns на сообщение пользователя.")
+        return
+    create_user(target.id, target)
+    if not _group_staff_allowed(message.from_user.id, target.id):
+        await message.reply("⛔ Недостаточно прав.")
+        return
+    users[str(target.id)].setdefault("warnings", {})[str(message.chat.id)] = 0
+    save_users()
+    await message.reply(f"✅ Варны {target.full_name} очищены.")
+
+@dp.message(Command("ban"))
+async def group_ban_command(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    remember_group(message.chat)
+    create_user(message.from_user.id, message.from_user)
+    target = _target_from_reply(message)
+    if not target:
+        if get_role(message.from_user.id) in GROUP_MOD_ROLES:
+            await message.reply("⚠️ Ответь /ban на сообщение пользователя.")
+        return
+    create_user(target.id, target)
+    if not _group_staff_allowed(message.from_user.id, target.id):
+        await message.reply("⛔ Недостаточно прав.")
+        return
+    try:
+        await message.bot.ban_chat_member(message.chat.id, target.id)
+        await message.reply(f"⛔ {target.full_name} забанен.")
+    except Exception:
+        await message.reply("❌ Не получилось. Проверь право бота блокировать участников.")
+
+@dp.message(Command("unban"))
+async def group_unban_command(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    create_user(message.from_user.id, message.from_user)
+    if get_role(message.from_user.id) not in GROUP_MOD_ROLES:
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await message.reply("Формат: /unban TELEGRAM_ID")
+        return
+    target_id = int(parts[1])
+    create_user(target_id)
+    if not _group_staff_allowed(message.from_user.id, target_id):
+        await message.reply("⛔ Недостаточно прав.")
+        return
+    try:
+        await message.bot.unban_chat_member(message.chat.id, target_id, only_if_banned=True)
+        await message.reply("✅ Пользователь разбанен.")
+    except Exception:
+        await message.reply("❌ Не получилось разбанить.")
+
+@dp.message(Command("kick"))
+async def group_kick_command(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    remember_group(message.chat)
+    create_user(message.from_user.id, message.from_user)
+    target = _target_from_reply(message)
+    if not target:
+        if get_role(message.from_user.id) in GROUP_MOD_ROLES:
+            await message.reply("⚠️ Ответь /kick на сообщение пользователя.")
+        return
+    create_user(target.id, target)
+    if not _group_staff_allowed(message.from_user.id, target.id):
+        await message.reply("⛔ Недостаточно прав.")
+        return
+    try:
+        await message.bot.ban_chat_member(message.chat.id, target.id)
+        await message.bot.unban_chat_member(message.chat.id, target.id, only_if_banned=True)
+        await message.reply(f"👢 {target.full_name} кикнут.")
+    except Exception:
+        await message.reply("❌ Не получилось. Проверь права бота.")
+
 
 @dp.message(Command("mute"))
 async def group_mute(message: Message, bot: Bot):
@@ -1667,6 +1816,150 @@ async def help_command(message: Message):
     )
 
 
+
+# ============================================================
+# MINI APP
+# ============================================================
+
+WEBAPP_URL = os.getenv("WEBAPP_URL", "").rstrip("/")
+CONTENT_FILE = "content.json"
+
+def load_content():
+    if not os.path.exists(CONTENT_FILE):
+        return {"news": "", "homework": {}}
+    try:
+        with open(CONTENT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.setdefault("news", "")
+        data.setdefault("homework", {})
+        return data
+    except Exception:
+        return {"news": "", "homework": {}}
+
+content_data = load_content()
+
+def save_content():
+    with open(CONTENT_FILE, "w", encoding="utf-8") as f:
+        json.dump(content_data, f, ensure_ascii=False, indent=2)
+
+def validate_init_data(init_data: str):
+    if not init_data or not BOT_TOKEN:
+        return None
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+        received_hash = pairs.pop("hash", None)
+        if not received_hash:
+            return None
+        data_check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+        secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        expected = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, received_hash):
+            return None
+        auth_date = int(pairs.get("auth_date", "0"))
+        if abs(int(time.time()) - auth_date) > 86400:
+            return None
+        return json.loads(pairs.get("user", "{}"))
+    except Exception:
+        return None
+
+def mini_actor(request):
+    tg_user = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
+    if not tg_user or "id" not in tg_user:
+        return None
+    uid = str(tg_user["id"])
+    if uid not in users:
+        return None
+    if ROLE_LEVELS.get(get_role(uid), 0) < ROLE_LEVELS["junior_moder"]:
+        return None
+    return uid
+
+async def mini_index(request):
+    return web.FileResponse(Path(__file__).with_name("miniapp.html"))
+
+async def mini_me(request):
+    uid = mini_actor(request)
+    if not uid:
+        return web.json_response({"error": "forbidden"}, status=403)
+    return web.json_response({
+        "id": uid,
+        "role": get_role(uid),
+        "role_label": role_label(get_role(uid)),
+        "users": len(users),
+        "groups": [{"id": gid, **g} for gid, g in groups.items() if g.get("active", True)],
+        "news": content_data.get("news", ""),
+        "homework": content_data.get("homework", {})
+    })
+
+async def mini_users(request):
+    uid = mini_actor(request)
+    if not uid:
+        return web.json_response({"error": "forbidden"}, status=403)
+    result = []
+    for user_id, u in list(users.items())[-200:]:
+        result.append({
+            "id": user_id,
+            "name": " ".join(x for x in [u.get("first_name"), u.get("last_name")] if x) or "Без имени",
+            "username": u.get("username"),
+            "class": u.get("class"),
+            "role": u.get("role", "student"),
+            "role_label": role_label(u.get("role", "student"))
+        })
+    return web.json_response(result)
+
+async def mini_save_news(request):
+    uid = mini_actor(request)
+    if not uid or ROLE_LEVELS.get(get_role(uid), 0) < ROLE_LEVELS["admin"]:
+        return web.json_response({"error": "forbidden"}, status=403)
+    body = await request.json()
+    content_data["news"] = str(body.get("text", ""))[:10000]
+    save_content()
+    return web.json_response({"ok": True})
+
+async def mini_save_homework(request):
+    uid = mini_actor(request)
+    if not uid:
+        return web.json_response({"error": "forbidden"}, status=403)
+    body = await request.json()
+    class_name = str(body.get("class_name", "")).strip()
+    text = str(body.get("text", ""))[:10000]
+    if not class_name:
+        return web.json_response({"error": "class required"}, status=400)
+    content_data.setdefault("homework", {})[class_name] = text
+    save_content()
+    return web.json_response({"ok": True})
+
+@dp.message(Command("app"))
+async def open_mini_app(message: Message):
+    if message.chat.type != "private":
+        return
+    create_user(message.from_user.id, message.from_user)
+    if ROLE_LEVELS.get(get_role(message.from_user.id), 0) < ROLE_LEVELS["junior_moder"]:
+        await message.answer("⛔ Нет доступа к панели.")
+        return
+    if not WEBAPP_URL:
+        await message.answer("⚠️ WEBAPP_URL ещё не настроен в Railway.")
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⚙️ Открыть LSL Control", web_app=WebAppInfo(url=WEBAPP_URL))
+    ]])
+    await message.answer("⚙️ LSL Control", reply_markup=kb)
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", mini_index)
+    app.router.add_get("/api/me", mini_me)
+    app.router.add_get("/api/users", mini_users)
+    app.router.add_post("/api/news", mini_save_news)
+    app.router.add_post("/api/homework", mini_save_homework)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Mini App server: port {port}")
+    return runner
+
+
 # ============================================================
 # ЗАПУСК
 # ============================================================
@@ -1680,7 +1973,11 @@ async def main():
     print("🎓 Классы: 1А–11А/Б")
     print("📅 Расписание: 6Б / 7А / 8А")
 
-    await dp.start_polling(bot)
+    runner = await start_web_server()
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
 
 
 if __name__ == "__main__":
