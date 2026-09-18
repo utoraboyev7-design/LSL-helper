@@ -2075,7 +2075,7 @@ async def open_mini_app(message: Message):
     ]])
     await message.answer("⚙️ LSL Control", reply_markup=kb)
 
-async def start_web_server():
+async def start_web_server(bot):
     app = web.Application()
     app["bot"] = bot
     app.router.add_get("/", mini_index)
@@ -2108,7 +2108,7 @@ async def main():
     print("🎓 Классы: 1А–11А/Б")
     print("📅 Расписание: 6Б / 7А / 8А")
 
-    runner = await start_web_server()
+    runner = await start_web_server(bot)
     try:
         await dp.start_polling(bot)
     finally:
