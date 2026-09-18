@@ -20,12 +20,13 @@ from languages.en.subjects import SUBJECTS as EN_SUBJECTS
 # НАСТРОЙКИ
 # ============================================================
 
-BOT_TOKEN = "8826205831:AAEGl9yCGu7T5yHnV9I4gicg1kbQf4C943I"
+
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_FILE = "users.json"
 
 dp = Dispatcher()
-
 
 # ============================================================
 # ЯЗЫКИ
