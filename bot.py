@@ -557,11 +557,38 @@ def developer_user_card(user_id, user):
 
 def user_manage_keyboard(user_id):
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔇 Мут", callback_data=f"pmute:{user_id}"),
+         InlineKeyboardButton(text="🔊 Размут", callback_data=f"punmute:{user_id}")],
+        [InlineKeyboardButton(text="👢 Кик", callback_data=f"pkick:{user_id}"),
+         InlineKeyboardButton(text="⛔ Бан в группе", callback_data=f"pgroupban:{user_id}")],
         [InlineKeyboardButton(text="🎖 Изменить должность", callback_data=f"roles:{user_id}")],
         [InlineKeyboardButton(
-            text="✅ Разбанить" if users.get(str(user_id), {}).get("banned") else "🚫 Заблокировать",
+            text="✅ Разбанить в боте" if users.get(str(user_id), {}).get("banned") else "🚫 Заблокировать в боте",
             callback_data=f"ban:{user_id}"
         )]
+    ])
+
+def moderation_group_keyboard(action, user_id):
+    rows = []
+    active = [(gid, g) for gid, g in groups.items() if g.get("active", True)]
+    for gid, g in active[:25]:
+        title = g.get("title", "Группа")
+        rows.append([InlineKeyboardButton(
+            text=f"🏫 {title[:32]}",
+            callback_data=f"modgrp:{action}:{user_id}:{gid}"
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user:{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def mute_duration_keyboard(user_id, group_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="10 мин", callback_data=f"domute:{user_id}:{group_id}:10"),
+         InlineKeyboardButton(text="30 мин", callback_data=f"domute:{user_id}:{group_id}:30")],
+        [InlineKeyboardButton(text="1 час", callback_data=f"domute:{user_id}:{group_id}:60"),
+         InlineKeyboardButton(text="6 часов", callback_data=f"domute:{user_id}:{group_id}:360")],
+        [InlineKeyboardButton(text="1 день", callback_data=f"domute:{user_id}:{group_id}:1440"),
+         InlineKeyboardButton(text="7 дней", callback_data=f"domute:{user_id}:{group_id}:10080")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"pmute:{user_id}")]
     ])
 
 def role_keyboard(user_id):
@@ -760,6 +787,9 @@ async def bot_membership_changed(event: ChatMemberUpdated):
 
 @dp.message(Command("panel"))
 async def open_panel(message: Message, state: FSMContext):
+    if message.chat.type != "private":
+        return
+
     user_id = message.from_user.id
     create_user(user_id, message.from_user)
 
@@ -780,6 +810,9 @@ async def open_panel(message: Message, state: FSMContext):
 
 @dp.message(DeveloperLogin.waiting_for_pin)
 async def developer_pin_login(message: Message, state: FSMContext):
+    if message.chat.type != "private":
+        return
+
     if message.text == DEVELOPER_PIN:
         user_id = str(message.from_user.id)
         create_user(user_id, message.from_user)
@@ -792,6 +825,9 @@ async def developer_pin_login(message: Message, state: FSMContext):
 
 @dp.message(F.text == "📊 Статистика")
 async def developer_stats(message: Message):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
     total = len(users)
@@ -808,6 +844,9 @@ async def developer_stats(message: Message):
 
 @dp.message(F.text == "👥 Пользователи")
 async def developer_users(message: Message):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
     if not users:
@@ -821,6 +860,9 @@ async def developer_users(message: Message):
 
 @dp.message(F.text == "🔎 Найти пользователя")
 async def find_user_start(message: Message, state: FSMContext):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
     await state.set_state(DeveloperAction.waiting_for_user)
@@ -828,6 +870,9 @@ async def find_user_start(message: Message, state: FSMContext):
 
 @dp.message(DeveloperAction.waiting_for_user)
 async def find_user_finish(message: Message, state: FSMContext):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         await state.clear()
         return
@@ -853,6 +898,9 @@ async def find_user_finish(message: Message, state: FSMContext):
 
 @dp.message(F.text == "🏫 Группы")
 async def developer_groups(message: Message):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
     active = [(gid, g) for gid, g in groups.items() if g.get("active", True)]
@@ -870,6 +918,9 @@ async def developer_groups(message: Message):
 
 @dp.message(F.text == "🛡 Персонал")
 async def developer_staff(message: Message):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
     staff = [(uid, u) for uid, u in users.items() if u.get("role", "student") != "student"]
@@ -880,8 +931,193 @@ async def developer_staff(message: Message):
     for uid, u in staff[:30]:
         await message.answer(developer_user_card(uid, u), reply_markup=user_manage_keyboard(uid))
 
+
+def _panel_mod_allowed(actor_id, target_id):
+    return can_group_moderate(actor_id, target_id)
+
+@dp.callback_query(F.data.startswith("pmute:"))
+async def panel_mute_choose_group(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+    uid = callback.data.split(":", 1)[1]
+    if uid not in users or not _panel_mod_allowed(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    active = [g for g in groups.values() if g.get("active", True)]
+    if not active:
+        await callback.answer("Нет сохранённых групп", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "🔇 Выбери группу для мута:",
+        reply_markup=moderation_group_keyboard("mute", uid)
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("punmute:"))
+async def panel_unmute_choose_group(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+    uid = callback.data.split(":", 1)[1]
+    if uid not in users or not _panel_mod_allowed(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "🔊 Выбери группу:",
+        reply_markup=moderation_group_keyboard("unmute", uid)
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("pkick:"))
+async def panel_kick_choose_group(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+    uid = callback.data.split(":", 1)[1]
+    if uid not in users or not _panel_mod_allowed(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "👢 Выбери группу для кика:",
+        reply_markup=moderation_group_keyboard("kick", uid)
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("pgroupban:"))
+async def panel_ban_choose_group(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+    uid = callback.data.split(":", 1)[1]
+    if uid not in users or not _panel_mod_allowed(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "⛔ Выбери группу для бана:",
+        reply_markup=moderation_group_keyboard("ban", uid)
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("modgrp:"))
+async def panel_group_action(callback: CallbackQuery, bot: Bot):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+
+    _, action, uid, group_id = callback.data.split(":", 3)
+    if uid not in users or not _panel_mod_allowed(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    if group_id not in groups or not groups[group_id].get("active", True):
+        await callback.answer("Группа недоступна", show_alert=True)
+        return
+
+    if action == "mute":
+        await callback.message.edit_text(
+            f"🔇 Выбери срок мута\\n🏫 {groups[group_id].get('title', 'Группа')}",
+            reply_markup=mute_duration_keyboard(uid, group_id)
+        )
+        await callback.answer()
+        return
+
+    try:
+        gid = int(group_id)
+        target_id = int(uid)
+
+        if action == "unmute":
+            await bot.restrict_chat_member(
+                chat_id=gid,
+                user_id=target_id,
+                permissions=ChatPermissions(
+                    can_send_messages=True, can_send_audios=True,
+                    can_send_documents=True, can_send_photos=True,
+                    can_send_videos=True, can_send_video_notes=True,
+                    can_send_voice_notes=True, can_send_polls=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True,
+                    can_change_info=False, can_invite_users=True,
+                    can_pin_messages=False, can_manage_topics=False
+                )
+            )
+            result = "🔊 Мут снят."
+        elif action == "kick":
+            await bot.ban_chat_member(chat_id=gid, user_id=target_id)
+            await bot.unban_chat_member(chat_id=gid, user_id=target_id, only_if_banned=True)
+            result = "👢 Пользователь кикнут."
+        elif action == "ban":
+            await bot.ban_chat_member(chat_id=gid, user_id=target_id)
+            result = "⛔ Пользователь забанен в группе."
+        else:
+            await callback.answer("Неизвестное действие", show_alert=True)
+            return
+
+        await callback.message.edit_text(
+            result + f"\\n🏫 {groups[group_id].get('title', 'Группа')}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К пользователю", callback_data=f"user:{uid}")]
+            ])
+        )
+        await callback.answer("Готово")
+    except Exception:
+        await callback.answer(
+            "Не получилось. Проверь админ-права бота в этой группе.",
+            show_alert=True
+        )
+
+@dp.callback_query(F.data.startswith("domute:"))
+async def panel_do_mute(callback: CallbackQuery, bot: Bot):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+
+    _, uid, group_id, minutes_raw = callback.data.split(":", 3)
+    if uid not in users or not _panel_mod_allowed(callback.from_user.id, uid):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    try:
+        minutes = int(minutes_raw)
+        from datetime import datetime, timedelta, timezone
+        until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+        await bot.restrict_chat_member(
+            chat_id=int(group_id),
+            user_id=int(uid),
+            permissions=ChatPermissions(
+                can_send_messages=False, can_send_audios=False,
+                can_send_documents=False, can_send_photos=False,
+                can_send_videos=False, can_send_video_notes=False,
+                can_send_voice_notes=False, can_send_polls=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+                can_change_info=False, can_invite_users=False,
+                can_pin_messages=False, can_manage_topics=False
+            ),
+            until_date=until
+        )
+
+        await callback.message.edit_text(
+            f"🔇 Мут выдан на {minutes} мин.\\n"
+            f"🏫 {groups.get(group_id, {}).get('title', 'Группа')}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К пользователю", callback_data=f"user:{uid}")]
+            ])
+        )
+        await callback.answer("Готово")
+    except Exception:
+        await callback.answer(
+            "Не получилось выдать мут. Проверь права бота и наличие пользователя в группе.",
+            show_alert=True
+        )
+
+
 @dp.callback_query(F.data.startswith("user:"))
 async def callback_user(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+
     uid = callback.data.split(":", 1)[1]
     if get_role(callback.from_user.id) not in {"developer", "creator"}:
         await callback.answer("Нет доступа", show_alert=True)
@@ -894,6 +1130,10 @@ async def callback_user(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("roles:"))
 async def callback_roles(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+
     uid = callback.data.split(":", 1)[1]
     if not can_manage(callback.from_user.id, uid):
         await callback.answer("Недостаточно прав", show_alert=True)
@@ -903,6 +1143,10 @@ async def callback_roles(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("setrole:"))
 async def callback_set_role(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+
     _, uid, new_role = callback.data.split(":", 2)
     if uid not in users or new_role not in ROLE_LABELS:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -921,6 +1165,10 @@ async def callback_set_role(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("ban:"))
 async def callback_ban(callback: CallbackQuery):
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer()
+        return
+
     uid = callback.data.split(":", 1)[1]
     if uid not in users:
         await callback.answer("Пользователь не найден", show_alert=True)
@@ -941,6 +1189,9 @@ async def callback_ban(callback: CallbackQuery):
 
 @dp.message(F.text == "🚪 Выйти из панели")
 async def developer_logout(message: Message):
+    if message.chat.type != "private":
+        return
+
     if get_role(message.from_user.id) not in {"developer", "creator"}:
         return
     language = get_language(message.from_user.id)
@@ -959,6 +1210,9 @@ async def developer_logout(message: Message):
 
 @dp.message(CommandStart())
 async def start(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1001,6 +1255,9 @@ async def start(message: Message):
 
 @dp.message(F.text.in_(LANGUAGES.keys()))
 async def select_language(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1035,6 +1292,9 @@ async def select_language(message: Message):
 
 @dp.message(F.text.in_(CLASSES))
 async def select_class(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1068,6 +1328,9 @@ async def select_class(message: Message):
 
 @dp.message(F.text.startswith("🎓"))
 async def change_class(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1101,6 +1364,9 @@ async def change_class(message: Message):
     })
 )
 async def change_language(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     await message.answer(
         "🌐 Выбери язык / Choose language / Tilni tanlang:",
@@ -1113,6 +1379,9 @@ async def change_language(message: Message):
 # ============================================================
 
 async def send_schedule(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1185,6 +1454,9 @@ async def send_schedule(message: Message):
     })
 )
 async def schedule(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     await send_schedule(message)
 
@@ -1201,6 +1473,9 @@ async def schedule(message: Message):
     })
 )
 async def books(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1240,6 +1515,9 @@ async def books(message: Message):
     })
 )
 async def homework(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1279,6 +1557,9 @@ async def homework(message: Message):
     })
 )
 async def news(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1316,6 +1597,9 @@ async def news(message: Message):
     })
 )
 async def contacts(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
@@ -1353,6 +1637,9 @@ async def contacts(message: Message):
     })
 )
 async def help_command(message: Message):
+    if message.chat.type != "private":
+        return
+
 
     user_id = message.from_user.id
 
