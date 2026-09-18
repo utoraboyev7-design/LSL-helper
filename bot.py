@@ -3,8 +3,10 @@ import json
 import os
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 from languages.ru.texts import TEXTS as RU_TEXTS
 from languages.ru.subjects import SUBJECTS as RU_SUBJECTS
@@ -23,6 +25,7 @@ from languages.en.subjects import SUBJECTS as EN_SUBJECTS
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+DEVELOPER_PIN = os.getenv("DEVELOPER_PIN")
 
 DATA_FILE = "users.json"
 
@@ -312,9 +315,7 @@ def load_users():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
-
         return data if isinstance(data, dict) else {}
-
     except Exception:
         return {}
 
@@ -324,37 +325,62 @@ users = load_users()
 
 def save_users():
     with open(DATA_FILE, "w", encoding="utf-8") as file:
-        json.dump(
-            users,
-            file,
-            ensure_ascii=False,
-            indent=4
-        )
+        json.dump(users, file, ensure_ascii=False, indent=4)
 
 
-def create_user(user_id):
+def create_user(user_id, tg_user=None):
     user_id = str(user_id)
 
     if user_id not in users:
         users[user_id] = {
             "language": None,
-            "class": None
+            "class": None,
+            "role": "student",
+            "banned": False,
+            "username": None,
+            "first_name": None,
+            "last_name": None
         }
-        save_users()
+
+    user = users[user_id]
+    user.setdefault("language", None)
+    user.setdefault("class", None)
+    user.setdefault("role", "student")
+    user.setdefault("banned", False)
+    user.setdefault("username", None)
+    user.setdefault("first_name", None)
+    user.setdefault("last_name", None)
+
+    if tg_user is not None:
+        user["username"] = tg_user.username
+        user["first_name"] = tg_user.first_name
+        user["last_name"] = tg_user.last_name
+
+    save_users()
 
 
 def get_language(user_id):
     user = users.get(str(user_id), {})
     language = user.get("language")
-
     if language in TEXTS:
         return language
-
     return None
 
 
 def get_class(user_id):
     return users.get(str(user_id), {}).get("class")
+
+
+def get_role(user_id):
+    return users.get(str(user_id), {}).get("role", "student")
+
+
+def is_banned(user_id):
+    return users.get(str(user_id), {}).get("banned", False)
+
+
+def is_developer(user_id):
+    return get_role(user_id) == "developer"
 
 
 # ============================================================
@@ -434,6 +460,141 @@ def main_menu(user_id):
 
 
 # ============================================================
+# РЕЖИМ РАЗРАБОТЧИКА
+# ============================================================
+
+class DeveloperLogin(StatesGroup):
+    waiting_for_pin = State()
+
+
+developer_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="🔎 Найти пользователя")],
+        [KeyboardButton(text="🚪 Выйти из панели")]
+    ],
+    resize_keyboard=True
+)
+
+
+def developer_user_card(user_id, user):
+    username = f"@{user.get('username')}" if user.get("username") else "—"
+    full_name = " ".join(
+        part for part in [user.get("first_name"), user.get("last_name")] if part
+    ) or "—"
+    return (
+        f"👤 {full_name}\n"
+        f"🆔 {user_id}\n"
+        f"🔗 {username}\n"
+        f"🎓 Класс: {user.get('class') or '—'}\n"
+        f"🌐 Язык: {user.get('language') or '—'}\n"
+        f"🔑 Роль: {user.get('role', 'student')}\n"
+        f"🚫 Бан: {'да' if user.get('banned', False) else 'нет'}"
+    )
+
+
+@dp.message(Command("panel"))
+async def open_panel(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    create_user(user_id, message.from_user)
+
+    if is_banned(user_id):
+        await message.answer("🚫 Доступ к боту для вашего аккаунта заблокирован.")
+        return
+
+    if is_developer(user_id):
+        await message.answer("👑 Режим разработчика", reply_markup=developer_menu)
+        return
+
+    if not DEVELOPER_PIN:
+        await message.answer("⚠️ DEVELOPER_PIN не настроен на сервере.")
+        return
+
+    await state.set_state(DeveloperLogin.waiting_for_pin)
+    await message.answer(
+        "🔐 Введите PIN разработчика:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
+@dp.message(DeveloperLogin.waiting_for_pin)
+async def developer_pin_login(message: Message, state: FSMContext):
+    if message.text == DEVELOPER_PIN:
+        user_id = str(message.from_user.id)
+        create_user(user_id, message.from_user)
+        users[user_id]["role"] = "developer"
+        save_users()
+        await state.clear()
+        await message.answer(
+            "✅ Доступ подтверждён.\n\n👑 Режим разработчика",
+            reply_markup=developer_menu
+        )
+        return
+
+    await message.answer("❌ Неверный PIN. Попробуйте ещё раз или отправьте /start для выхода.")
+
+
+@dp.message(F.text == "📊 Статистика")
+async def developer_stats(message: Message):
+    if not is_developer(message.from_user.id):
+        return
+
+    total = len(users)
+    banned = sum(1 for user in users.values() if user.get("banned", False))
+    teachers = sum(1 for user in users.values() if user.get("role") == "teacher")
+    admins = sum(1 for user in users.values() if user.get("role") == "admin")
+
+    await message.answer(
+        "📊 Статистика бота\n\n"
+        f"👥 Пользователей: {total}\n"
+        f"👨‍🏫 Учителей: {teachers}\n"
+        f"🛡 Администраторов: {admins}\n"
+        f"🚫 Заблокировано: {banned}"
+    )
+
+
+@dp.message(F.text == "👥 Пользователи")
+async def developer_users(message: Message):
+    if not is_developer(message.from_user.id):
+        return
+
+    if not users:
+        await message.answer("Пользователей пока нет.")
+        return
+
+    items = list(users.items())
+    await message.answer(f"👥 Всего пользователей: {len(items)}")
+
+    # Первая версия: показываем до 20 пользователей за один запрос.
+    for user_id, user in items[:20]:
+        await message.answer(developer_user_card(user_id, user))
+
+    if len(items) > 20:
+        await message.answer(
+            "ℹ️ Показаны первые 20. Позже добавим страницы и кнопки управления."
+        )
+
+
+@dp.message(F.text == "🚪 Выйти из панели")
+async def developer_logout(message: Message):
+    if not is_developer(message.from_user.id):
+        return
+
+    language = get_language(message.from_user.id)
+    class_name = get_class(message.from_user.id)
+
+    if language and class_name:
+        await message.answer(
+            "🚪 Панель закрыта.",
+            reply_markup=main_menu(message.from_user.id)
+        )
+    elif language:
+        await message.answer("🚪 Панель закрыта.", reply_markup=class_menu)
+    else:
+        await message.answer("🚪 Панель закрыта.", reply_markup=language_menu)
+
+
+# ============================================================
 # START
 # ============================================================
 
@@ -442,7 +603,11 @@ async def start(message: Message):
 
     user_id = message.from_user.id
 
-    create_user(user_id)
+    create_user(user_id, message.from_user)
+
+    if is_banned(user_id):
+        await message.answer("🚫 Доступ к боту для вашего аккаунта заблокирован.")
+        return
 
     language = get_language(user_id)
     class_name = get_class(user_id)
