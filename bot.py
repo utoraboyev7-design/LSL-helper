@@ -35,8 +35,10 @@ from languages.en.subjects import SUBJECTS as EN_SUBJECTS
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DEVELOPER_PIN = os.getenv("DEVELOPER_PIN")
 
-DATA_FILE = "users.json"
-GROUPS_FILE = "groups.json"
+DATA_DIR = os.getenv("DATA_DIR", ".")
+os.makedirs(DATA_DIR, exist_ok=True)
+DATA_FILE = os.path.join(DATA_DIR, "users.json")
+GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
 
 dp = Dispatcher()
 
@@ -1817,24 +1819,39 @@ async def help_command(message: Message):
 
 
 
+
+async def send_saved_homework(message: Message):
+    if message.chat.type != "private":
+        return
+    uid = str(message.from_user.id)
+    class_name = get_class(uid)
+    language = get_language(uid) or "ru"
+    text = content_data.get("homework", {}).get(class_name, "").strip()
+    if text:
+        await message.answer(f"📚 {class_name}\n\n{text}")
+    else:
+        await message.answer("📚 Домашнее задание для вашего класса пока не добавлено.")
+
 # ============================================================
 # MINI APP
 # ============================================================
 
 WEBAPP_URL = os.getenv("WEBAPP_URL", "").rstrip("/")
-CONTENT_FILE = "content.json"
+CONTENT_FILE = os.path.join(DATA_DIR, "content.json")
 
 def load_content():
+    default = {"news": "", "homework": {}, "audit": []}
     if not os.path.exists(CONTENT_FILE):
-        return {"news": "", "homework": {}}
+        return default
     try:
         with open(CONTENT_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         data.setdefault("news", "")
         data.setdefault("homework", {})
+        data.setdefault("audit", [])
         return data
     except Exception:
-        return {"news": "", "homework": {}}
+        return default
 
 content_data = load_content()
 
@@ -1876,35 +1893,57 @@ def mini_actor(request):
 async def mini_index(request):
     return web.FileResponse(Path(__file__).with_name("miniapp.html"))
 
+
+def public_user(user_id, u):
+    return {
+        "id": str(user_id),
+        "name": " ".join(x for x in [u.get("first_name"), u.get("last_name")] if x) or "Без имени",
+        "username": u.get("username"),
+        "class": u.get("class"),
+        "language": u.get("language"),
+        "role": u.get("role", "student"),
+        "role_label": role_label(u.get("role", "student")),
+        "banned": bool(u.get("banned", False)),
+    }
+
+def mini_can_manage(actor_id, target_id, new_role=None):
+    return can_manage(actor_id, target_id, new_role)
+
+def add_audit(actor_id, action, target=None, extra=None):
+    item = {
+        "ts": int(time.time()),
+        "actor": str(actor_id),
+        "action": action,
+        "target": str(target) if target is not None else None,
+        "extra": extra or {}
+    }
+    content_data.setdefault("audit", []).append(item)
+    content_data["audit"] = content_data["audit"][-300:]
+    save_content()
+
 async def mini_me(request):
     uid = mini_actor(request)
     if not uid:
         return web.json_response({"error": "forbidden"}, status=403)
+    role = get_role(uid)
     return web.json_response({
         "id": uid,
-        "role": get_role(uid),
-        "role_label": role_label(get_role(uid)),
+        "role": role,
+        "role_label": role_label(role),
+        "role_level": ROLE_LEVELS.get(role, 0),
         "users": len(users),
+        "classes": CLASSES,
         "groups": [{"id": gid, **g} for gid, g in groups.items() if g.get("active", True)],
         "news": content_data.get("news", ""),
-        "homework": content_data.get("homework", {})
+        "homework": content_data.get("homework", {}),
+        "audit": content_data.get("audit", [])[-30:]
     })
 
 async def mini_users(request):
     uid = mini_actor(request)
     if not uid:
         return web.json_response({"error": "forbidden"}, status=403)
-    result = []
-    for user_id, u in list(users.items())[-200:]:
-        result.append({
-            "id": user_id,
-            "name": " ".join(x for x in [u.get("first_name"), u.get("last_name")] if x) or "Без имени",
-            "username": u.get("username"),
-            "class": u.get("class"),
-            "role": u.get("role", "student"),
-            "role_label": role_label(u.get("role", "student"))
-        })
-    return web.json_response(result)
+    return web.json_response([public_user(user_id, u) for user_id, u in list(users.items())[-500:]])
 
 async def mini_save_news(request):
     uid = mini_actor(request)
@@ -1912,6 +1951,7 @@ async def mini_save_news(request):
         return web.json_response({"error": "forbidden"}, status=403)
     body = await request.json()
     content_data["news"] = str(body.get("text", ""))[:10000]
+    add_audit(uid, "news")
     save_content()
     return web.json_response({"ok": True})
 
@@ -1922,11 +1962,102 @@ async def mini_save_homework(request):
     body = await request.json()
     class_name = str(body.get("class_name", "")).strip()
     text = str(body.get("text", ""))[:10000]
-    if not class_name:
-        return web.json_response({"error": "class required"}, status=400)
+    if class_name not in CLASSES:
+        return web.json_response({"error": "invalid class"}, status=400)
     content_data.setdefault("homework", {})[class_name] = text
+    add_audit(uid, "homework", extra={"class": class_name})
     save_content()
     return web.json_response({"ok": True})
+
+async def mini_user_role(request):
+    actor = mini_actor(request)
+    if not actor:
+        return web.json_response({"error": "forbidden"}, status=403)
+    target = request.match_info["uid"]
+    body = await request.json()
+    new_role = str(body.get("role", ""))
+    if target not in users or new_role not in ROLE_LABELS or new_role == "developer":
+        return web.json_response({"error": "bad request"}, status=400)
+    if not mini_can_manage(actor, target, new_role):
+        return web.json_response({"error": "forbidden"}, status=403)
+    users[target]["role"] = new_role
+    save_users()
+    add_audit(actor, "role", target, {"role": new_role})
+    return web.json_response({"ok": True, "user": public_user(target, users[target])})
+
+async def mini_user_botban(request):
+    actor = mini_actor(request)
+    if not actor:
+        return web.json_response({"error": "forbidden"}, status=403)
+    target = request.match_info["uid"]
+    if target not in users or not mini_can_manage(actor, target):
+        return web.json_response({"error": "forbidden"}, status=403)
+    body = await request.json()
+    banned = bool(body.get("banned", True))
+    users[target]["banned"] = banned
+    save_users()
+    add_audit(actor, "botban", target, {"banned": banned})
+    return web.json_response({"ok": True, "user": public_user(target, users[target])})
+
+async def mini_group_action(request):
+    actor = mini_actor(request)
+    if not actor:
+        return web.json_response({"error": "forbidden"}, status=403)
+    target = request.match_info["uid"]
+    if target not in users or not can_group_moderate(actor, target):
+        return web.json_response({"error": "forbidden"}, status=403)
+    body = await request.json()
+    action = str(body.get("action", ""))
+    group_id = str(body.get("group_id", ""))
+    minutes = int(body.get("minutes", 10) or 10)
+    if group_id not in groups or not groups[group_id].get("active", True):
+        return web.json_response({"error": "invalid group"}, status=400)
+    gid, tid = int(group_id), int(target)
+    try:
+        if action == "mute":
+            from datetime import datetime, timedelta, timezone
+            until = datetime.now(timezone.utc) + timedelta(minutes=max(1, min(minutes, 10080)))
+            await request.app["bot"].restrict_chat_member(
+                gid, tid,
+                permissions=ChatPermissions(
+                    can_send_messages=False, can_send_audios=False, can_send_documents=False,
+                    can_send_photos=False, can_send_videos=False, can_send_video_notes=False,
+                    can_send_voice_notes=False, can_send_polls=False, can_send_other_messages=False,
+                    can_add_web_page_previews=False, can_change_info=False, can_invite_users=False,
+                    can_pin_messages=False, can_manage_topics=False
+                ),
+                until_date=until
+            )
+        elif action == "unmute":
+            await request.app["bot"].restrict_chat_member(
+                gid, tid,
+                permissions=ChatPermissions(
+                    can_send_messages=True, can_send_audios=True, can_send_documents=True,
+                    can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
+                    can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
+                    can_add_web_page_previews=True, can_change_info=False, can_invite_users=True,
+                    can_pin_messages=False, can_manage_topics=False
+                )
+            )
+        elif action == "kick":
+            await request.app["bot"].ban_chat_member(gid, tid)
+            await request.app["bot"].unban_chat_member(gid, tid, only_if_banned=True)
+        elif action == "ban":
+            await request.app["bot"].ban_chat_member(gid, tid)
+        elif action == "warn":
+            warnings = users[target].setdefault("warnings", {})
+            warnings[group_id] = int(warnings.get(group_id, 0)) + 1
+            save_users()
+        elif action == "clearwarns":
+            users[target].setdefault("warnings", {})[group_id] = 0
+            save_users()
+        else:
+            return web.json_response({"error": "invalid action"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": "telegram action failed", "detail": str(e)[:300]}, status=400)
+    add_audit(actor, action, target, {"group_id": group_id, "minutes": minutes})
+    return web.json_response({"ok": True})
+
 
 @dp.message(Command("app"))
 async def open_mini_app(message: Message):
@@ -1946,11 +2077,15 @@ async def open_mini_app(message: Message):
 
 async def start_web_server():
     app = web.Application()
+    app["bot"] = bot
     app.router.add_get("/", mini_index)
     app.router.add_get("/api/me", mini_me)
     app.router.add_get("/api/users", mini_users)
     app.router.add_post("/api/news", mini_save_news)
     app.router.add_post("/api/homework", mini_save_homework)
+    app.router.add_post("/api/users/{uid}/role", mini_user_role)
+    app.router.add_post("/api/users/{uid}/botban", mini_user_botban)
+    app.router.add_post("/api/users/{uid}/group-action", mini_group_action)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", "8080"))

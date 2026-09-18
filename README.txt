@@ -1,23 +1,31 @@
-LSL Helper upgrade
+LSL HELPER PRO — установка
 
-1. Replace your repo bot.py with this bot.py.
-2. Put miniapp.html next to bot.py.
-3. Replace requirements.txt with this one (or add aiohttp).
-4. Push to GitHub and wait for Railway deploy.
-5. Railway -> service Settings -> Networking -> Generate Domain.
-6. Railway Variables -> WEBAPP_URL = your generated https:// domain (no quotes).
-7. Redeploy.
-8. In private chat with bot use /app.
-9. Optional: BotFather -> /mybots -> your bot -> Bot Settings -> Configure Mini App -> Enable Mini App and set the same HTTPS URL.
+Файлы:
+- bot.py
+- miniapp.html
+- requirements.txt
 
-Group commands:
-- reply /warn reason
-- reply /warns
-- reply /clearwarns
-- reply /mute 30
-- reply /unmute
-- reply /kick
-- reply /ban
-- /unban TELEGRAM_ID
+1) Замени эти файлы в GitHub-репозитории.
+2) Railway Variables:
+   WEBAPP_URL=https://lsl-helper-production.up.railway.app
+   DATA_DIR=/app/data
+   BOT_TOKEN=твой токен
+   DEVELOPER_PIN=твой PIN
+3) Railway: добавь Volume к сервису LSL-helper и mount path поставь /app/data.
+   Это обязательно, иначе users/content/groups могут пропасть после redeploy.
+4) Deploy.
+5) В Telegram открой /app.
 
-Bot must be group admin with Restrict/Ban permissions.
+Что добавлено:
+- профессиональнее Mini App: dashboard, ДЗ, новости, люди, группы;
+- ДЗ выбирается из списка классов;
+- сохранённое в Mini App ДЗ читается кнопкой ДЗ в боте;
+- поиск/фильтр пользователей;
+- изменение ролей;
+- бан/разбан в самом боте;
+- mute/unmute/warn/clearwarns/kick/ban по выбранной группе;
+- журнал последних действий;
+- Telegram initData проверяется сервером;
+- иерархия ролей применяется на backend, а не только в интерфейсе.
+
+Новости оставлены простыми, как просил пользователь.

@@ -1,56 +1,60 @@
 <!doctype html>
-<html lang="ru">
-<head>
+<html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>LSL Control</title>
-<script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+<title>LSL Control</title><script src="https://telegram.org/js/telegram-web-app.js?63"></script>
 <style>
-:root{font-family:Inter,system-ui,sans-serif}*{box-sizing:border-box}
-body{margin:0;background:var(--tg-theme-bg-color,#101820);color:var(--tg-theme-text-color,#fff)}
-header{padding:18px 16px 10px;position:sticky;top:0;background:var(--tg-theme-bg-color,#101820);z-index:2}
-h1{margin:0;font-size:22px}.sub{opacity:.65;font-size:13px;margin-top:4px}
-nav{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;padding:10px 12px}
-button,.card,input,textarea,select{border:0;border-radius:14px}
-button{padding:11px 8px;background:var(--tg-theme-button-color,#2aabee);color:var(--tg-theme-button-text-color,#fff);font-weight:700}
-main{padding:4px 12px 30px}.card{background:var(--tg-theme-secondary-bg-color,#18232e);padding:14px;margin:10px 0}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{font-size:25px;font-weight:800}
-textarea,input,select{width:100%;padding:12px;margin:7px 0;background:var(--tg-theme-bg-color,#101820);color:inherit;border:1px solid #ffffff20}
-textarea{min-height:130px;resize:vertical}.hidden{display:none}.user{padding:10px 0;border-bottom:1px solid #ffffff16}
-small{opacity:.65}.ok{color:#4bd37b}.err{color:#ff6b6b}
-</style></head>
-<body>
-<header><h1>LSL Control</h1><div class="sub" id="who">Проверяю доступ…</div></header>
-<nav>
-<button onclick="show('home')">Главная</button><button onclick="show('news')">Новости</button>
-<button onclick="show('hw')">ДЗ</button><button onclick="show('users')">Люди</button>
-</nav>
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--tg-theme-bg-color,#0b1220);color:var(--tg-theme-text-color,#f7f8fa)}
+header{padding:18px 16px 12px;position:sticky;top:0;background:var(--tg-theme-bg-color,#0b1220);z-index:4;border-bottom:1px solid #ffffff12}
+.brand{display:flex;align-items:center;gap:11px}.logo{width:42px;height:42px;border-radius:14px;background:var(--tg-theme-button-color,#2aabee);display:grid;place-items:center;font-size:22px}
+h1{font-size:19px;margin:0}.muted{opacity:.62;font-size:12px}.tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px 10px 4px;position:sticky;top:73px;background:var(--tg-theme-bg-color,#0b1220);z-index:3}
+button,.btn{border:0;border-radius:12px;background:var(--tg-theme-button-color,#2aabee);color:var(--tg-theme-button-text-color,#fff);padding:11px;font-weight:700;cursor:pointer}
+.tab{font-size:11px;padding:9px 4px;background:var(--tg-theme-secondary-bg-color,#172236);color:inherit}.tab.active{background:var(--tg-theme-button-color,#2aabee)}
+main{padding:8px 12px 40px}.page{display:none}.page.active{display:block}.card{background:var(--tg-theme-secondary-bg-color,#172236);border-radius:17px;padding:14px;margin:10px 0;border:1px solid #ffffff0d}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.num{font-size:27px;font-weight:850;margin-top:4px}
+input,textarea,select{width:100%;border:1px solid #ffffff1a;border-radius:12px;background:var(--tg-theme-bg-color,#0b1220);color:inherit;padding:12px;margin:6px 0 10px;font:inherit}
+textarea{min-height:140px;resize:vertical}.row{display:flex;gap:7px}.row>*{flex:1}.user{padding:12px 0;border-bottom:1px solid #ffffff12}.user:last-child{border:0}
+.badge{display:inline-block;padding:3px 7px;border-radius:999px;background:#ffffff12;font-size:11px}.danger{background:#d94b4b}.success{color:#4ed58a}.error{color:#ff7070}
+.sheet{position:fixed;inset:0;background:#0008;z-index:20;display:none;align-items:flex-end}.sheet.open{display:flex}.sheetbox{width:100%;max-height:88vh;overflow:auto;background:var(--tg-theme-bg-color,#0b1220);border-radius:22px 22px 0 0;padding:17px}
+.actiongrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.secondary{background:var(--tg-theme-secondary-bg-color,#172236);color:inherit;border:1px solid #ffffff18}
+</style></head><body>
+<header><div class="brand"><div class="logo">🏫</div><div><h1>LSL Control</h1><div class="muted" id="who">Авторизация…</div></div></div></header>
+<div class="tabs">
+<button class="tab active" data-p="dash">Главная</button><button class="tab" data-p="hw">ДЗ</button><button class="tab" data-p="news">Новости</button><button class="tab" data-p="users">Люди</button><button class="tab" data-p="groups">Группы</button>
+</div>
 <main>
-<section id="home"><div class="grid">
-<div class="card"><small>Пользователи</small><div class="stat" id="uc">—</div></div>
-<div class="card"><small>Группы</small><div class="stat" id="gc">—</div></div>
-</div><div class="card"><b>Группы бота</b><div id="groups"></div></div></section>
-<section id="news" class="hidden"><div class="card"><b>📰 Быстрая смена новости</b><textarea id="newsText"></textarea><button onclick="saveNews()">Сохранить</button><div id="newsStatus"></div></div></section>
-<section id="hw" class="hidden"><div class="card"><b>📚 Домашнее задание</b><input id="className" placeholder="Класс, например 7А"><textarea id="hwText" placeholder="Домашнее задание"></textarea><button onclick="saveHw()">Сохранить ДЗ</button><div id="hwStatus"></div></div></section>
-<section id="users" class="hidden"><div class="card"><b>👥 Пользователи</b><input id="search" placeholder="Имя, @username или ID" oninput="renderUsers()"><div id="userList"></div></div></section>
+<section id="dash" class="page active"><div class="grid"><div class="card"><div class="muted">Пользователи</div><div class="num" id="uc">—</div></div><div class="card"><div class="muted">Группы</div><div class="num" id="gc">—</div></div></div><div class="card"><b>⚡ Быстрые действия</b><p class="muted">ДЗ и управление пользователями синхронизированы с ботом.</p><div class="row"><button onclick="go('hw')">Добавить ДЗ</button><button onclick="go('users')">Пользователи</button></div></div><div class="card"><b>Последние действия</b><div id="audit"></div></div></section>
+<section id="hw" class="page"><div class="card"><b>📚 Домашнее задание</b><p class="muted">Класс выбирается из списка — вручную писать не нужно.</p><select id="hwClass" onchange="loadHw()"></select><textarea id="hwText" placeholder="Введите домашнее задание…"></textarea><button onclick="saveHw()">Сохранить ДЗ</button><div id="hwStatus"></div></div></section>
+<section id="news" class="page"><div class="card"><b>📰 Новости</b><p class="muted">Оставил этот раздел простым, без лишней автоматизации.</p><textarea id="newsText" placeholder="Текст новости"></textarea><button onclick="saveNews()">Сохранить</button><div id="newsStatus"></div></div></section>
+<section id="users" class="page"><div class="card"><b>👥 Управление пользователями</b><input id="search" placeholder="Имя, @username, ID или класс" oninput="renderUsers()"><select id="roleFilter" onchange="renderUsers()"><option value="">Все роли</option></select><div id="userList"></div></div></section>
+<section id="groups" class="page"><div class="card"><b>🏫 Группы бота</b><div id="groupList"></div></div></section>
 </main>
+<div class="sheet" id="sheet" onclick="if(event.target===this)closeSheet()"><div class="sheetbox"><div class="row"><div><b id="sName">Пользователь</b><div class="muted" id="sMeta"></div></div><button class="secondary" onclick="closeSheet()">✕</button></div><hr style="border-color:#ffffff12">
+<label class="muted">Должность</label><select id="sRole"></select><button onclick="setRole()">Сохранить роль</button>
+<div class="card"><b>Модерация группы</b><select id="sGroup"></select><select id="sMinutes"><option value="10">10 минут</option><option value="30">30 минут</option><option value="60">1 час</option><option value="360">6 часов</option><option value="1440">1 день</option><option value="10080">7 дней</option></select><div class="actiongrid"><button onclick="groupAction('warn')">⚠️ Варн</button><button onclick="groupAction('mute')">🔇 Мут</button><button onclick="groupAction('unmute')">🔊 Размут</button><button onclick="groupAction('clearwarns')">🧹 Варны</button><button onclick="groupAction('kick')">👢 Кик</button><button class="danger" onclick="groupAction('ban')">⛔ Бан</button></div></div>
+<button id="botBanBtn" class="danger" onclick="toggleBotBan()">🚫 Заблокировать в боте</button><div id="sStatus"></div></div></div>
 <script>
-const tg=window.Telegram.WebApp; tg.ready(); tg.expand();
-const headers={'X-Telegram-Init-Data':tg.initData,'Content-Type':'application/json'};
-let allUsers=[],me=null;
-function show(id){document.querySelectorAll('main section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden')}
-async function api(url,opt={}){opt.headers={...headers,...(opt.headers||{})};const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r.json()}
-async function load(){
- try{
-  me=await api('/api/me'); document.getElementById('who').textContent=me.role_label+' • ID '+me.id;
-  uc.textContent=me.users;gc.textContent=me.groups.length;
-  groups.innerHTML=me.groups.map(g=>`<div class="user">🏫 ${esc(g.title||'Группа')}<br><small>${g.id}</small></div>`).join('')||'<small>Нет групп</small>';
-  newsText.value=me.news||'';
-  allUsers=await api('/api/users');renderUsers();
- }catch(e){document.getElementById('who').innerHTML='<span class="err">Нет доступа или приложение открыто не через Telegram</span>'}
-}
+const tg=Telegram.WebApp;tg.ready();tg.expand();const H={'X-Telegram-Init-Data':tg.initData,'Content-Type':'application/json'};
+let me={},users=[],selected=null;
+const roleNames={student:'Пользователь',teacher:'Учитель',junior_moder:'Мл. модер',moder:'Модер',junior_admin:'Мл. админ',admin:'Админ',zga:'ЗГА',ga:'ГА',creator:'Создатель'};
+async function api(u,o={}){o.headers={...H,...(o.headers||{})};let r=await fetch(u,o);let j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Ошибка');return j}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function renderUsers(){let q=(search.value||'').toLowerCase();userList.innerHTML=allUsers.filter(u=>(u.name+' '+(u.username||'')+' '+u.id).toLowerCase().includes(q)).slice(0,100).map(u=>`<div class="user"><b>${esc(u.name)}</b> ${u.username?'@'+esc(u.username):''}<br><small>${u.id} • ${esc(u.class||'без класса')} • ${esc(u.role_label)}</small></div>`).join('')}
-async function saveNews(){try{await api('/api/news',{method:'POST',body:JSON.stringify({text:newsText.value})});newsStatus.innerHTML='<span class="ok">✓ Сохранено</span>'}catch(e){newsStatus.innerHTML='<span class="err">Ошибка/нет прав</span>'}}
-async function saveHw(){try{await api('/api/homework',{method:'POST',body:JSON.stringify({class_name:className.value,text:hwText.value})});hwStatus.innerHTML='<span class="ok">✓ Сохранено</span>'}catch(e){hwStatus.innerHTML='<span class="err">Ошибка</span>'}}
+function go(p){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===p));document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.p===p))}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>go(b.dataset.p));
+async function load(){try{me=await api('/api/me');users=await api('/api/users');who.textContent=me.role_label+' • ID '+me.id;uc.textContent=me.users;gc.textContent=me.groups.length;
+hwClass.innerHTML=me.classes.map(c=>`<option>${esc(c)}</option>`).join('');newsText.value=me.news||'';loadHw();
+groupList.innerHTML=me.groups.map(g=>`<div class="user"><b>🏫 ${esc(g.title||'Группа')}</b><br><span class="muted">${g.id}</span></div>`).join('')||'<p class="muted">Нет групп</p>';
+sGroup.innerHTML=me.groups.map(g=>`<option value="${g.id}">${esc(g.title||g.id)}</option>`).join('');
+sRole.innerHTML=Object.entries(roleNames).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+roleFilter.innerHTML+=[...new Set(users.map(u=>u.role))].map(r=>`<option value="${r}">${esc(roleNames[r]||r)}</option>`).join('');
+audit.innerHTML=(me.audit||[]).slice().reverse().slice(0,10).map(a=>`<div class="user"><b>${esc(a.action)}</b> <span class="muted">${esc(a.target||'')}</span></div>`).join('')||'<p class="muted">Пока пусто</p>';renderUsers()}catch(e){who.innerHTML='<span class="error">Нет доступа: '+esc(e.message)+'</span>'}}
+function loadHw(){hwText.value=(me.homework||{})[hwClass.value]||''}
+async function saveHw(){try{await api('/api/homework',{method:'POST',body:JSON.stringify({class_name:hwClass.value,text:hwText.value})});me.homework[hwClass.value]=hwText.value;hwStatus.innerHTML='<p class="success">✓ Сохранено. Теперь это ДЗ показывается и в меню бота.</p>'}catch(e){hwStatus.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
+async function saveNews(){try{await api('/api/news',{method:'POST',body:JSON.stringify({text:newsText.value})});newsStatus.innerHTML='<p class="success">✓ Сохранено</p>'}catch(e){newsStatus.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
+function renderUsers(){let q=search.value.toLowerCase(),rf=roleFilter.value;userList.innerHTML=users.filter(u=>(!rf||u.role===rf)&&(`${u.name} ${u.username||''} ${u.id} ${u.class||''}`).toLowerCase().includes(q)).map(u=>`<div class="user" onclick="openUser('${u.id}')"><b>${esc(u.name)}</b> ${u.username?'@'+esc(u.username):''} ${u.banned?'<span class="badge">BOT BAN</span>':''}<br><span class="muted">${u.id} • ${esc(u.class||'без класса')} • ${esc(u.role_label)}</span></div>`).join('')||'<p class="muted">Не найдено</p>'}
+function openUser(id){selected=users.find(u=>u.id===id);if(!selected)return;sName.textContent=selected.name;sMeta.textContent=`${selected.id} • ${selected.username?'@'+selected.username:'без username'} • ${selected.class||'без класса'}`;sRole.value=selected.role;botBanBtn.textContent=selected.banned?'✅ Разбанить в боте':'🚫 Заблокировать в боте';sheet.classList.add('open')}
+function closeSheet(){sheet.classList.remove('open');selected=null}
+async function setRole(){try{let r=await api(`/api/users/${selected.id}/role`,{method:'POST',body:JSON.stringify({role:sRole.value})});Object.assign(selected,r.user);sStatus.innerHTML='<p class="success">✓ Роль изменена</p>';renderUsers()}catch(e){sStatus.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
+async function toggleBotBan(){try{let r=await api(`/api/users/${selected.id}/botban`,{method:'POST',body:JSON.stringify({banned:!selected.banned})});Object.assign(selected,r.user);openUser(selected.id);renderUsers()}catch(e){sStatus.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
+async function groupAction(action){try{await api(`/api/users/${selected.id}/group-action`,{method:'POST',body:JSON.stringify({action,group_id:sGroup.value,minutes:+sMinutes.value})});sStatus.innerHTML='<p class="success">✓ Выполнено</p>'}catch(e){sStatus.innerHTML='<p class="error">'+esc(e.message)+'</p>'}}
 load();
 </script></body></html>
