@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
                            InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
-                           ChatMemberUpdated)
+                           ChatMemberUpdated, ChatPermissions)
 
 from languages.ru.texts import TEXTS as RU_TEXTS
 from languages.ru.subjects import SUBJECTS as RU_SUBJECTS
@@ -596,6 +596,153 @@ def can_manage(actor_id, target_id, new_role=None):
     if new_role == "developer":
         return False
     return True
+
+
+# ============================================================
+# МОДЕРАЦИЯ В ГРУППАХ ПО РОЛЯМ
+# ============================================================
+
+GROUP_MOD_ROLES = {
+    "junior_moder", "moder", "junior_admin", "admin",
+    "zga", "ga", "creator", "developer"
+}
+
+def can_group_moderate(actor_id, target_id):
+    """Сотрудник может модерировать только пользователя с ролью ниже своей."""
+    actor_role = get_role(actor_id)
+    target_role = get_role(target_id)
+
+    if actor_role not in GROUP_MOD_ROLES:
+        return False
+
+    return ROLE_LEVELS.get(actor_role, 0) > ROLE_LEVELS.get(target_role, 0)
+
+def parse_mute_minutes(text):
+    # /mute -> 10 минут по умолчанию
+    # /mute 30 -> 30 минут
+    parts = (text or "").split()
+    if len(parts) < 2:
+        return 10
+    try:
+        minutes = int(parts[1])
+        return max(1, min(minutes, 10080))  # максимум 7 дней
+    except ValueError:
+        return None
+
+@dp.message(Command("mute"))
+async def group_mute(message: Message, bot: Bot):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+
+    remember_group(message.chat)
+    create_user(message.from_user.id, message.from_user)
+
+    if get_role(message.from_user.id) not in GROUP_MOD_ROLES:
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        await message.reply("⚠️ Ответь командой /mute на сообщение пользователя.")
+        return
+
+    target = message.reply_to_message.from_user
+    create_user(target.id, target)
+
+    if target.id == message.from_user.id:
+        await message.reply("⚠️ Себя замутить нельзя.")
+        return
+
+    if not can_group_moderate(message.from_user.id, target.id):
+        await message.reply("⛔ Нельзя мутить пользователя с такой же или более высокой должностью.")
+        return
+
+    minutes = parse_mute_minutes(message.text)
+    if minutes is None:
+        await message.reply("⚠️ Формат: /mute 10 — мут на 10 минут.")
+        return
+
+    from datetime import datetime, timedelta, timezone
+    until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+    try:
+        await bot.restrict_chat_member(
+            chat_id=message.chat.id,
+            user_id=target.id,
+            permissions=ChatPermissions(
+                can_send_messages=False,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_videos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_polls=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+                can_change_info=False,
+                can_invite_users=False,
+                can_pin_messages=False,
+                can_manage_topics=False,
+            ),
+            until_date=until
+        )
+        name = f"@{target.username}" if target.username else target.full_name
+        await message.reply(f"🔇 {name} получил мут на {minutes} мин.\n🛡 Выдал: {role_label(get_role(message.from_user.id))}")
+    except Exception:
+        await message.reply(
+            "❌ Не получилось выдать мут.\n"
+            "Проверь, что бот — администратор группы и у него есть право ограничивать участников."
+        )
+
+@dp.message(Command("unmute"))
+async def group_unmute(message: Message, bot: Bot):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+
+    remember_group(message.chat)
+    create_user(message.from_user.id, message.from_user)
+
+    if get_role(message.from_user.id) not in GROUP_MOD_ROLES:
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        await message.reply("⚠️ Ответь командой /unmute на сообщение пользователя.")
+        return
+
+    target = message.reply_to_message.from_user
+    create_user(target.id, target)
+
+    if not can_group_moderate(message.from_user.id, target.id):
+        await message.reply("⛔ Нельзя размутить пользователя с такой же или более высокой должностью.")
+        return
+
+    try:
+        await bot.restrict_chat_member(
+            chat_id=message.chat.id,
+            user_id=target.id,
+            permissions=ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=True,
+                can_send_documents=True,
+                can_send_photos=True,
+                can_send_videos=True,
+                can_send_video_notes=True,
+                can_send_voice_notes=True,
+                can_send_polls=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True,
+                can_change_info=False,
+                can_invite_users=True,
+                can_pin_messages=False,
+                can_manage_topics=False,
+            )
+        )
+        name = f"@{target.username}" if target.username else target.full_name
+        await message.reply(f"🔊 Мут снят с {name}.")
+    except Exception:
+        await message.reply(
+            "❌ Не получилось снять мут.\n"
+            "Проверь права администратора у бота."
+        )
 
 @dp.my_chat_member()
 async def bot_membership_changed(event: ChatMemberUpdated):
