@@ -1879,14 +1879,51 @@ def validate_init_data(init_data: str):
     except Exception:
         return None
 
+
+def make_mini_session(user_id):
+    ts = int(time.time())
+    payload = f"{user_id}:{ts}"
+    sig = hmac.new(BOT_TOKEN.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+def validate_mini_session(token):
+    try:
+        uid, ts, sig = token.split(":", 2)
+        if abs(int(time.time()) - int(ts)) > 3600:
+            return None
+        payload = f"{uid}:{ts}"
+        expected = hmac.new(BOT_TOKEN.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        return uid
+    except Exception:
+        return None
+
+def panel_permissions(role):
+    level = ROLE_LEVELS.get(role, 0)
+    return {
+        "homework": role in {"teacher","junior_admin","admin","zga","ga","creator","developer"},
+        "news": level >= ROLE_LEVELS["admin"],
+        "users": level >= ROLE_LEVELS["junior_moder"],
+        "group_moderation": role in GROUP_MOD_ROLES,
+        "bot_ban": level >= ROLE_LEVELS["junior_admin"],
+        "roles": level >= ROLE_LEVELS["admin"],
+        "staff": level >= ROLE_LEVELS["zga"],
+        "full": role in {"creator","developer"},
+    }
+
 def mini_actor(request):
+    uid = None
     tg_user = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
-    if not tg_user or "id" not in tg_user:
+    if tg_user and "id" in tg_user:
+        uid = str(tg_user["id"])
+    if not uid:
+        uid = validate_mini_session(request.headers.get("X-LSL-Session", ""))
+    if not uid or uid not in users:
         return None
-    uid = str(tg_user["id"])
-    if uid not in users:
-        return None
-    if ROLE_LEVELS.get(get_role(uid), 0) < ROLE_LEVELS["junior_moder"]:
+    role = get_role(uid)
+    # Student has no staff panel. Teacher and every staff rank have their own panel.
+    if role == "student":
         return None
     return uid
 
@@ -1907,7 +1944,20 @@ def public_user(user_id, u):
     }
 
 def mini_can_manage(actor_id, target_id, new_role=None):
-    return can_manage(actor_id, target_id, new_role)
+    actor_role = get_role(actor_id)
+    target_role = get_role(target_id)
+    if not panel_permissions(actor_role)["roles"]:
+        return False
+    if actor_role == "developer":
+        return new_role != "developer" or str(actor_id) == str(target_id)
+    if target_role == "developer" or new_role == "developer":
+        return False
+    if actor_role == "creator":
+        return target_role != "developer" and new_role != "developer"
+    actor_level = ROLE_LEVELS.get(actor_role, 0)
+    target_level = ROLE_LEVELS.get(target_role, 0)
+    new_level = ROLE_LEVELS.get(new_role, 0) if new_role else 0
+    return target_level < actor_level and (not new_role or new_level < actor_level)
 
 def add_audit(actor_id, action, target=None, extra=None):
     item = {
@@ -1931,6 +1981,7 @@ async def mini_me(request):
         "role": role,
         "role_label": role_label(role),
         "role_level": ROLE_LEVELS.get(role, 0),
+        "permissions": panel_permissions(role),
         "users": len(users),
         "classes": CLASSES,
         "groups": [{"id": gid, **g} for gid, g in groups.items() if g.get("active", True)],
@@ -1941,7 +1992,7 @@ async def mini_me(request):
 
 async def mini_users(request):
     uid = mini_actor(request)
-    if not uid:
+    if not uid or not panel_permissions(get_role(uid))["users"]:
         return web.json_response({"error": "forbidden"}, status=403)
     return web.json_response([public_user(user_id, u) for user_id, u in list(users.items())[-500:]])
 
@@ -1957,7 +2008,7 @@ async def mini_save_news(request):
 
 async def mini_save_homework(request):
     uid = mini_actor(request)
-    if not uid:
+    if not uid or not panel_permissions(get_role(uid))["homework"]:
         return web.json_response({"error": "forbidden"}, status=403)
     body = await request.json()
     class_name = str(body.get("class_name", "")).strip()
@@ -1990,7 +2041,11 @@ async def mini_user_botban(request):
     if not actor:
         return web.json_response({"error": "forbidden"}, status=403)
     target = request.match_info["uid"]
-    if target not in users or not mini_can_manage(actor, target):
+    if target not in users:
+        return web.json_response({"error": "not found"}, status=404)
+    actor_role, target_role = get_role(actor), get_role(target)
+    if (not panel_permissions(actor_role)["bot_ban"] or
+        ROLE_LEVELS.get(actor_role, 0) <= ROLE_LEVELS.get(target_role, 0)):
         return web.json_response({"error": "forbidden"}, status=403)
     body = await request.json()
     banned = bool(body.get("banned", True))
@@ -2064,16 +2119,20 @@ async def open_mini_app(message: Message):
     if message.chat.type != "private":
         return
     create_user(message.from_user.id, message.from_user)
-    if ROLE_LEVELS.get(get_role(message.from_user.id), 0) < ROLE_LEVELS["junior_moder"]:
-        await message.answer("⛔ Нет доступа к панели.")
+    role = get_role(message.from_user.id)
+    if role == "student":
+        await message.answer("⛔ Для вашей роли административная панель не предусмотрена.")
         return
     if not WEBAPP_URL:
         await message.answer("⚠️ WEBAPP_URL ещё не настроен в Railway.")
         return
+    session = make_mini_session(message.from_user.id)
+    sep = "&" if "?" in WEBAPP_URL else "?"
+    launch_url = f"{WEBAPP_URL}{sep}s={session}"
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⚙️ Открыть LSL Control", web_app=WebAppInfo(url=WEBAPP_URL))
+        InlineKeyboardButton(text=f"⚙️ Открыть панель • {role_label(role)}", web_app=WebAppInfo(url=launch_url))
     ]])
-    await message.answer("⚙️ LSL Control", reply_markup=kb)
+    await message.answer(f"⚙️ LSL Control\\n🛡 Ваша роль: {role_label(role)}", reply_markup=kb)
 
 async def start_web_server(bot):
     app = web.Application()
