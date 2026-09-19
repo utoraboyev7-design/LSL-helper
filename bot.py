@@ -1931,6 +1931,15 @@ async def mini_index(request):
     return web.FileResponse(Path(__file__).with_name("miniapp.html"))
 
 
+def json_safe(value):
+    if isinstance(value, set):
+        return sorted(list(value))
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    return value
+
 def public_user(user_id, u):
     return {
         "id": str(user_id),
@@ -1976,19 +1985,19 @@ async def mini_me(request):
     if not uid:
         return web.json_response({"error": "forbidden"}, status=403)
     role = get_role(uid)
-    return web.json_response({
+    return web.json_response(json_safe({
         "id": uid,
         "role": role,
         "role_label": role_label(role),
         "role_level": ROLE_LEVELS.get(role, 0),
         "permissions": panel_permissions(role),
         "users": len(users),
-        "classes": CLASSES,
+        "classes": sorted(list(CLASSES)),
         "groups": [{"id": gid, **g} for gid, g in groups.items() if g.get("active", True)],
         "news": content_data.get("news", ""),
         "homework": content_data.get("homework", {}),
         "audit": content_data.get("audit", [])[-30:]
-    })
+    }))
 
 async def mini_users(request):
     uid = mini_actor(request)
