@@ -1,0 +1,8 @@
+LSL Helper — 8Б schedule update
+
+- 8А schedule in bot.py was NOT changed.
+- Added selectable class 8Б.
+- Added 8Б button beside 8А.
+- 8Б receives the timetable from the 8А column of the supplied school timetable photo,
+  because the real 8А/8Б assignments were swapped.
+- Existing homework/news fixes and /back are preserved.

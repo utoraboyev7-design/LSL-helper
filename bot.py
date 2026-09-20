@@ -78,6 +78,7 @@ CLASSES = {
     "6А", "6Б",
     "7А", "7Б",
     "8А",
+    "8Б",
     "9А", "9Б",
     "10А", "10Б",
     "11А"
@@ -278,6 +279,69 @@ SCHEDULES = {
             ("15:45–16:30", "Jis/tar"),
         ],
     },
+
+    "8Б": {
+        "Понедельник": [
+            ("8:30–9:15", "Algebra"),
+            ("9:25–10:10", "Fizika"),
+            ("10:20–11:05", "Rus tili"),
+            ("11:15–12:00", "Biologiya"),
+            ("13:00–13:45", "Chet tili"),
+            ("13:55–14:40", "Chet tili"),
+            ("14:50–15:35", "Algebra"),
+            ("15:45–16:30", "Geografiya"),
+        ],
+        "Вторник": [
+            ("8:30–9:15", "Informatika"),
+            ("9:25–10:10", "Informatika"),
+            ("10:20–11:05", "Texnologiya"),
+            ("11:15–12:00", "Tarix"),
+            ("13:00–13:45", "Chet tili"),
+            ("13:55–14:40", "Chet tili"),
+            ("14:50–15:35", "Matematika"),
+            ("15:45–16:30", "Informatika"),
+        ],
+        "Среда": [
+            ("8:30–9:15", "Tarbiya"),
+            ("9:25–10:10", "Rus tili"),
+            ("10:20–11:05", "Geografiya"),
+            ("11:15–12:00", "Chet tili"),
+            ("13:00–13:45", "Chet tili"),
+            ("13:55–14:40", "Chet tili"),
+            ("14:50–15:35", "Algebra"),
+            ("15:45–16:30", "Geometriya"),
+        ],
+        "Четверг": [
+            ("8:30–9:15", "Adabiyot"),
+            ("9:25–10:10", "Kimyo"),
+            ("10:20–11:05", "Huquq"),
+            ("11:15–12:00", "Biologiya"),
+            ("13:00–13:45", "Chet tili"),
+            ("13:55–14:40", "Chet tili"),
+            ("14:50–15:35", "Tasv/Chizma"),
+            ("15:45–16:30", "Ona tili"),
+        ],
+        "Пятница": [
+            ("8:30–9:15", "Tarix"),
+            ("9:25–10:10", "Biologiya"),
+            ("10:20–11:05", "Kimyo"),
+            ("11:15–12:00", "Algebra"),
+            ("13:00–13:45", "Sinf soati"),
+            ("13:55–14:40", "Geometriya"),
+            ("14:50–15:35", "Mat. kurs"),
+            ("15:45–16:30", "Mat. kurs"),
+        ],
+        "Суббота": [
+            ("8:30–9:15", "Chet tili"),
+            ("9:25–10:10", "Fizika"),
+            ("10:20–11:05", "Jis/tar"),
+            ("11:15–12:00", "Jis/tar"),
+            ("13:00–13:45", "Informatika"),
+            ("13:55–14:40", "Informatika"),
+            ("14:50–15:35", "Chet tili"),
+            ("15:45–16:30", "Chet tili"),
+        ],
+    },
 }
 
 
@@ -424,7 +488,7 @@ class_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="5А"), KeyboardButton(text="5Б")],
         [KeyboardButton(text="6А"), KeyboardButton(text="6Б")],
         [KeyboardButton(text="7А"), KeyboardButton(text="7Б")],
-        [KeyboardButton(text="8А")],
+        [KeyboardButton(text="8А"), KeyboardButton(text="8Б")],
         [KeyboardButton(text="9А"), KeyboardButton(text="9Б")],
         [KeyboardButton(text="10А"), KeyboardButton(text="10Б")],
         [KeyboardButton(text="11А")],
@@ -1669,31 +1733,29 @@ async def homework(message: Message):
     if message.chat.type != "private":
         return
 
-
     user_id = message.from_user.id
-
+    create_user(user_id, message.from_user)
     language = get_language(user_id)
     class_name = get_class(user_id)
 
     if not language:
-        await message.answer(
-            "🌐 Сначала выбери язык.",
-            reply_markup=language_menu
-        )
+        await message.answer("🌐 Сначала выбери язык.", reply_markup=language_menu)
         return
-
     if not class_name:
-        await message.answer(
-            TEXTS[language]["no_class"],
-            reply_markup=class_menu
-        )
+        await message.answer(TEXTS[language]["no_class"], reply_markup=class_menu)
         return
 
-    await message.answer(
-        TEXTS[language]["homework_text"].format(
-            class_name=class_name
-        )
-    )
+    text = content_data.get("homework", {}).get(class_name, "").strip()
+    if text:
+        titles = {"ru": "📝 Домашнее задание", "uz": "📝 Uy vazifasi", "en": "📝 Homework"}
+        await message.answer(f"{titles.get(language, titles['ru'])} — {class_name}\n\n{text}")
+    else:
+        empty = {
+            "ru": f"📝 Для класса {class_name} домашнее задание пока не добавлено.",
+            "uz": f"📝 {class_name} sinfi uchun uy vazifasi hali qo‘shilmagan.",
+            "en": f"📝 No homework has been added for {class_name} yet."
+        }
+        await message.answer(empty.get(language, empty["ru"]))
 
 
 # ============================================================
@@ -1711,29 +1773,29 @@ async def news(message: Message):
     if message.chat.type != "private":
         return
 
-
     user_id = message.from_user.id
-
+    create_user(user_id, message.from_user)
     language = get_language(user_id)
     class_name = get_class(user_id)
 
     if not language:
-        await message.answer(
-            "🌐 Сначала выбери язык.",
-            reply_markup=language_menu
-        )
+        await message.answer("🌐 Сначала выбери язык.", reply_markup=language_menu)
         return
-
     if not class_name:
-        await message.answer(
-            TEXTS[language]["no_class"],
-            reply_markup=class_menu
-        )
+        await message.answer(TEXTS[language]["no_class"], reply_markup=class_menu)
         return
 
-    await message.answer(
-        TEXTS[language]["news_text"]
-    )
+    text = str(content_data.get("news", "")).strip()
+    if text:
+        titles = {"ru": "📢 Новости LSL", "uz": "📢 LSL yangiliklari", "en": "📢 LSL News"}
+        await message.answer(f"{titles.get(language, titles['ru'])}\n\n{text}")
+    else:
+        empty = {
+            "ru": "📢 Новостей пока нет.",
+            "uz": "📢 Hozircha yangiliklar yo‘q.",
+            "en": "📢 There are no news posts yet."
+        }
+        await message.answer(empty.get(language, empty["ru"]))
 
 
 # ============================================================
@@ -2161,9 +2223,13 @@ async def start_web_server(bot):
     await site.start()
     print(f"🌐 Mini App server: port {port}")
     return runner
-#
-# ВОЗВРАШЕНИЕ РОЛЕЙ
-# gEt BACK ROLES
+
+
+
+# ============================================================
+# АВАРИЙНОЕ ВОССТАНОВЛЕНИЕ РОЛИ ПО PIN
+# ============================================================
+
 @dp.message(Command("back"))
 async def restore_role_by_pin(message: Message):
     parts = (message.text or "").split(maxsplit=2)
@@ -2201,9 +2267,8 @@ async def restore_role_by_pin(message: Message):
     users[str(message.from_user.id)]["role"] = role
     save_users()
 
-    await message.answer(
-        f"✅ Должность восстановлена: {role_label(role)}"
-    )
+    await message.answer(f"✅ Должность восстановлена: {role_label(role)}")
+
 # ============================================================
 # ЗАПУСК
 # ============================================================
@@ -2215,7 +2280,7 @@ async def main():
     print("🤖 Бот запущен!")
     print("🌐 Языки: RU / UZ / EN")
     print("🎓 Классы: 1А–11А/Б")
-    print("📅 Расписание: 6Б / 7А / 8А")
+    print("📅 Расписание: 6Б / 7А / 8А / 8Б")
 
     runner = await start_web_server(bot)
     try:
