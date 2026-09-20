@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
                            InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, WebAppInfo,
-                           ChatMemberUpdated, ChatPermissions)
+                           ChatMemberUpdated, ChatPermissions, FSInputFile)
 
 from languages.ru.texts import TEXTS as RU_TEXTS
 from languages.ru.subjects import SUBJECTS as RU_SUBJECTS
@@ -1624,12 +1624,26 @@ async def send_schedule(message: Message):
         return
 
     if class_name not in SCHEDULES:
-
-        await message.answer(
-            TEXTS[language]["no_schedule"].format(
-                class_name=class_name
-            )
+        timetable_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "schedules",
+            "school_timetable.jpg"
         )
+
+        if os.path.exists(timetable_path):
+            captions = {
+                "ru": f"📅 Расписание класса {class_name}\n\nОфициальная таблица школы. Найди столбец «{class_name}».",
+                "uz": f"📅 {class_name} sinfi dars jadvali\n\nMaktabning rasmiy jadvali. «{class_name}» ustunini toping.",
+                "en": f"📅 Schedule for class {class_name}\n\nOfficial school timetable. Find the “{class_name}” column."
+            }
+            await message.answer_photo(
+                photo=FSInputFile(timetable_path),
+                caption=captions.get(language, captions["ru"])
+            )
+        else:
+            await message.answer(
+                TEXTS[language]["no_schedule"].format(class_name=class_name)
+            )
         return
 
     schedule = SCHEDULES[class_name]
@@ -2306,7 +2320,7 @@ async def main():
     print("🤖 Бот запущен!")
     print("🌐 Языки: RU / UZ / EN")
     print("🎓 Классы: 1А–11А/Б")
-    print("📅 Расписание: 6Б / 7А / 8А / 8Б")
+    print("📅 Расписание: все классы из школьной таблицы + текстовые 6Б / 7А / 8А / 8Б")
 
     runner = await start_web_server(bot)
     try:
