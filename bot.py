@@ -2161,8 +2161,49 @@ async def start_web_server(bot):
     await site.start()
     print(f"🌐 Mini App server: port {port}")
     return runner
+#
+# ВОЗВРАШЕНИЕ РОЛЕЙ
+#
+@dp.message(Command("back"))
+async def restore_role_by_pin(message: Message):
+    parts = (message.text or "").split(maxsplit=2)
 
+    if len(parts) != 3:
+        await message.answer("Использование: /back ROLE PIN")
+        return
 
+    _, role_input, pin = parts
+
+    if not DEVELOPER_PIN or pin != DEVELOPER_PIN:
+        await message.answer("❌ Неверный PIN.")
+        return
+
+    role_map = {
+        "developer": "developer",
+        "creator": "creator",
+        "ga": "ga",
+        "zga": "zga",
+        "admin": "admin",
+        "junior_admin": "junior_admin",
+        "moder": "moder",
+        "junior_moder": "junior_moder",
+        "teacher": "teacher",
+        "student": "student",
+    }
+
+    role = role_map.get(role_input.lower())
+
+    if not role:
+        await message.answer("❌ Такой должности нет.")
+        return
+
+    create_user(message.from_user.id, message.from_user)
+    users[str(message.from_user.id)]["role"] = role
+    save_users()
+
+    await message.answer(
+        f"✅ Должность восстановлена: {role_label(role)}"
+    )
 # ============================================================
 # ЗАПУСК
 # ============================================================
