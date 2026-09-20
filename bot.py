@@ -2163,7 +2163,7 @@ async def start_web_server(bot):
     return runner
 #
 # ВОЗВРАШЕНИЕ РОЛЕЙ
-#
+# gEt BACK ROLES
 @dp.message(Command("back"))
 async def restore_role_by_pin(message: Message):
     parts = (message.text or "").split(maxsplit=2)
