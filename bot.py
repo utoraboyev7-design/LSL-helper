@@ -936,31 +936,39 @@ async def group_mute(message: Message, bot: Bot):
         )
 
 @dp.message(Command("unmute"))
-async def group_unmute(message: Message, bot: Bot):
+async def group_unmute(message: Message):
     if message.chat.type not in {"group", "supergroup"}:
         return
 
-    remember_group(message.chat)
-    create_user(message.from_user.id, message.from_user)
+    actor_id = message.from_user.id
+    create_user(actor_id, message.from_user)
 
-    if get_role(message.from_user.id) not in GROUP_MOD_ROLES:
+    target = None
+    args = (message.text or "").split(maxsplit=1)
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        target_id = target.id
+        create_user(target_id, target)
+    elif len(args) == 2 and args[1].strip().isdigit():
+        target_id = int(args[1].strip())
+        create_user(target_id)
+    else:
+        await message.answer("↩️ Ответь на сообщение пользователя командой /unmute\nили: /unmute TELEGRAM_ID")
         return
 
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        await message.reply("⚠️ Ответь командой /unmute на сообщение пользователя.")
+    if target_id == actor_id:
+        await message.answer("❌ Снимать мут с самого себя этой командой нельзя.")
         return
 
-    target = message.reply_to_message.from_user
-    create_user(target.id, target)
-
-    if not can_group_moderate(message.from_user.id, target.id):
-        await message.reply("⛔ Нельзя размутить пользователя с такой же или более высокой должностью.")
+    if not can_group_moderate(actor_id, target_id):
+        await message.answer("❌ Недостаточно прав: можно управлять только пользователем с более низким рангом.")
         return
 
     try:
         await bot.restrict_chat_member(
             chat_id=message.chat.id,
-            user_id=target.id,
+            user_id=target_id,
             permissions=ChatPermissions(
                 can_send_messages=True,
                 can_send_audios=True,
@@ -976,15 +984,13 @@ async def group_unmute(message: Message, bot: Bot):
                 can_invite_users=True,
                 can_pin_messages=False,
                 can_manage_topics=False,
-            )
+            ),
         )
-        name = f"@{target.username}" if target.username else target.full_name
-        await message.reply(f"🔊 Мут снят с {name}.")
-    except Exception:
-        await message.reply(
-            "❌ Не получилось снять мут.\n"
-            "Проверь права администратора у бота."
-        )
+        name = target.full_name if target else str(target_id)
+        await message.answer(f"🔊 Мут снят: {name}")
+    except Exception as e:
+        await message.answer(f"❌ Не удалось снять мут. Проверь права бота администратора.\n{type(e).__name__}")
+
 
 @dp.my_chat_member()
 async def bot_membership_changed(event: ChatMemberUpdated):
@@ -2268,6 +2274,26 @@ async def restore_role_by_pin(message: Message):
     save_users()
 
     await message.answer(f"✅ Должность восстановлена: {role_label(role)}")
+
+
+@dp.message(Command("modhelp"))
+async def moderation_help(message: Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+    if get_role(message.from_user.id) not in GROUP_MOD_ROLES:
+        return
+    await message.answer(
+        "🛡 Команды контроля чата\n\n"
+        "🔇 /mute [минуты] — ответом на сообщение\n"
+        "🔊 /unmute — ответом на сообщение\n"
+        "⚠️ /warn причина — выдать предупреждение\n"
+        "📋 /warns — посмотреть предупреждения\n"
+        "🧹 /clearwarns — очистить предупреждения\n"
+        "👢 /kick — исключить пользователя\n"
+        "⛔ /ban — заблокировать пользователя\n"
+        "✅ /unban ID — разблокировать по Telegram ID\n\n"
+        "Команды работают только по иерархии рангов."
+    )
 
 # ============================================================
 # ЗАПУСК
