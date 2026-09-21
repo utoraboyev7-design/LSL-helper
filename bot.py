@@ -3314,7 +3314,7 @@ async def profile(message: Message):
         users = json.load(file)
 
     User_class = users[str(User_ID)]["class"]
-    User_role = users[str(User_ID)]["role"]
+    User_role = users[str(User_ID)].get("role", "student")
 
     await message.answer(
         f"Имя: {User_Name}\n"
