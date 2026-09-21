@@ -3311,8 +3311,8 @@ with open("users.json", "r", encoding="utf-8") as file:
 async def profile(message: Message):
     User_ID = message.from_user.id
     User_Name = message.from_user.first_name
-    User_class = users[str(user_id)]["class"]
-    User_role = users[str(user_id)]["role"]
+    User_class = users[str(User_ID)]["class"]
+    User_role = users[str(User_ID)]["role"]
     await message.answer(f"Имя: {User_Name}\nTelegram ID: {User_ID}\nВаш класс: {User_class}\nВаша роль: {User_role}")
 
 
