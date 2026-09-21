@@ -3307,15 +3307,14 @@ async def start_web_server(bot):
 #
 with open("users.json", "r", encoding="utf-8") as file:
     users = json.load(file)
+     User_ID = message.from_user.id
+     User_Name = message.from_user.first_name
+     User_class = users[str(User_ID)]["class"]
+     User_role = users[str(User_ID)]["role"]
 
     @dp.message(Command("profile"))
     async def profile(message: Message):
-        User_ID = message.from_user.id
-        User_Name = message.from_user.first_name
-    
-        User_class = users[str(User_ID)]["class"]
-        User_role = users[str(User_ID)]["role"]
-    
+
         await message.answer(
             f"Имя: {User_Name}\n"
             f"Telegram ID: {User_ID}\n"
