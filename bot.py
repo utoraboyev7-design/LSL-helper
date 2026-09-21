@@ -3302,8 +3302,14 @@ async def start_web_server(bot):
     print(f"🌐 Mini App server: port {port}")
     return runner
 
-
-
+#
+# BETA by behruz
+#
+@dp.message(Command("profile"))
+async def profile(message: Message):
+    User_ID = message.from_user.id
+    User_Name = message.from_user.first_name
+    await message.answer(f"Имя: {User_Name}\n Telegram ID: {User_ID}")
 # ============================================================
 # АВАРИЙНОЕ ВОССТАНОВЛЕНИЕ РОЛИ ПО PIN
 # ============================================================
