@@ -1468,11 +1468,24 @@ def load_users():
 
 
 users = load_users()
-
-
 def save_users():
     with open(DATA_FILE, "w", encoding="utf-8") as file:
         json.dump(users, file, ensure_ascii=False, indent=4)
+
+
+for user_id in users:
+    user = users[user_id]
+
+    user.setdefault("language", None)
+    user.setdefault("class", None)
+    user.setdefault("role", "student")
+    user.setdefault("banned", False)
+    user.setdefault("username", None)
+    user.setdefault("first_name", None)
+    user.setdefault("last_name", None)
+    user.setdefault("warnings", {})
+
+save_users()
 
 
 def create_user(user_id, tg_user=None):
