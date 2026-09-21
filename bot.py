@@ -3305,11 +3305,17 @@ async def start_web_server(bot):
 #
 # BETA by behruz
 #
+with open("users.json", "r", encoding="utf-8") as file:
+        users = json.load(file)
 @dp.message(Command("profile"))
 async def profile(message: Message):
     User_ID = message.from_user.id
     User_Name = message.from_user.first_name
-    await message.answer(f"Имя: {User_Name}\n Telegram ID: {User_ID}")
+    User_class = users[str(user_id)]["class"]
+    User_role = users[str(user_id)]["role"]
+    await message.answer(f"Имя: {User_Name}\nTelegram ID: {User_ID}\nВаш класс: {User_class}\nВаша роль: {User_role}")
+
+
 # ============================================================
 # АВАРИЙНОЕ ВОССТАНОВЛЕНИЕ РОЛИ ПО PIN
 # ============================================================
